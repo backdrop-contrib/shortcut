@@ -541,6 +541,8 @@ function shortcut_link_edit_submit($form, &$form_state) {
   $shortcut_link = array_merge($form_state['values']['original_shortcut_link'], $form_state['values']['shortcut_link']);
 
   menu_link_save($shortcut_link);
+
+  menu_rebuild();
   $form_state['redirect'] = 'admin/config/user-interface/shortcut/' . $shortcut_link['menu_name'];
   backdrop_set_message(t('The shortcut %link has been updated.', array('%link' => $shortcut_link['link_title'])));
 }
@@ -555,6 +557,7 @@ function shortcut_link_add_submit($form, &$form_state) {
   $shortcut_link['menu_name'] = $shortcut_set->set_name;
   shortcut_admin_add_link($shortcut_link, $shortcut_set, shortcut_max_slots());
   shortcut_set_save($shortcut_set);
+  menu_cache_clear_all();
   $form_state['redirect'] = 'admin/config/user-interface/shortcut/' . $shortcut_link['menu_name'];
   backdrop_set_message(t('Added a shortcut for %title.', array('%title' => $shortcut_link['link_title'])));
 }
@@ -661,6 +664,7 @@ function shortcut_set_edit_form_submit($form, &$form_state) {
   $shortcut_set = $form_state['values']['shortcut_set'];
   $shortcut_set->title = $form_state['values']['title'];
   shortcut_set_save($shortcut_set);
+  menu_cache_clear_all();
   backdrop_set_message(t('Updated set name to %set-name.', array('%set-name' => $shortcut_set->title)));
   $form_state['redirect'] = "admin/config/user-interface/shortcut/$shortcut_set->set_name";
 }
@@ -724,6 +728,7 @@ function shortcut_set_delete_form($form, &$form_state, $shortcut_set) {
 function shortcut_set_delete_form_submit($form, &$form_state) {
   $shortcut_set = shortcut_set_load($form_state['values']['shortcut_set']);
   shortcut_set_delete($shortcut_set);
+  menu_cache_clear_all();
   $form_state['redirect'] = 'admin/config/user-interface/shortcut';
   backdrop_set_message(t('The shortcut set %title has been deleted.', array('%title' => $shortcut_set->title)));
 }
@@ -766,6 +771,7 @@ function shortcut_link_delete($form, &$form_state, $shortcut_link) {
 function shortcut_link_delete_submit($form, &$form_state) {
   $shortcut_link = $form_state['values']['shortcut_link'];
   menu_link_delete($shortcut_link['mlid']);
+  menu_cache_clear_all();
   $form_state['redirect'] = 'admin/config/user-interface/shortcut/' . $shortcut_link['menu_name'];
   backdrop_set_message(t('The shortcut %title has been deleted.', array('%title' => $shortcut_link['link_title'])));
 }
