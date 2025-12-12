@@ -1,3 +1,10 @@
+⚠️ Deprecation Notice
+-----------
+
+The 1.x-1.x branch of the Shortcut module is no longer supported. Development has moved to the new [1.x-2.x](https://github.com/backdrop-contrib/shortcut/tree/1.x-2.x) branch:
+
+The 1.x-2.x branch was rewritten from the ground up and does not share code with 1.x-1.x, so there is no direct upgrade path between the two branches. We strongly recommend switching to the new 1.x-2.x branch for all future use and development.
+
 Description
 -----------
 According to https://backdropcms.org/upgrade-from-drupal/features-removed-core
