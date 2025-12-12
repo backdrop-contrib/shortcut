@@ -666,6 +666,11 @@ function shortcut_user_shortcuts_manage_links_form($form, &$form_state, $account
   $form['#attributes']['class'][] = 'shortcut-set-customize-form';
   $form['#action'] = url('user/' . $account->uid . '/shortcuts/manage-links', array('query' => array('set' => $set['machine_name'])));
 
+  if (!isset($form['shortcuts'])) {
+    $form['shortcuts'] = array();
+  }
+  $form['shortcuts']['#caption'] = check_plain($set['name']);
+
   $links = shortcut_user_links_load($account->uid, $set['machine_name']);
   $ordered_links = array();
 
@@ -1351,6 +1356,9 @@ function theme_shortcut_user_shortcuts_manage_links_form($variables) {
     'rows' => $rows,
     'attributes' => $attributes,
   );
+  if (!empty($form['shortcuts']['#caption'])) {
+    $table_options['caption'] = $form['shortcuts']['#caption'];
+  }
   if (isset($form['shortcuts']['#empty'])) {
     $table_options['empty'] = $form['shortcuts']['#empty'];
   }
