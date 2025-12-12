@@ -153,6 +153,28 @@ function shortcut_menu() {
     'weight' => 0,
   );
 
+  $items['user/%user/shortcuts/manage-links/%shortcut_link/edit'] = array(
+    'title' => 'Edit shortcut',
+    'page callback' => 'backdrop_get_form',
+    'page arguments' => array('shortcut_user_link_edit_form', 1, 4),
+    'access callback' => 'shortcut_user_link_route_access',
+    'access arguments' => array(1, 4),
+    'type' => MENU_VISIBLE_IN_BREADCRUMB,
+    'tab_parent' => 'user/%/shortcuts/manage-links',
+    'tab_root' => 'user/%',
+  );
+
+  $items['user/%user/shortcuts/manage-links/%shortcut_link/delete'] = array(
+    'title' => 'Delete shortcut',
+    'page callback' => 'backdrop_get_form',
+    'page arguments' => array('shortcut_user_link_delete_form', 1, 4),
+    'access callback' => 'shortcut_user_link_route_access',
+    'access arguments' => array(1, 4),
+    'type' => MENU_VISIBLE_IN_BREADCRUMB,
+    'tab_parent' => 'user/%/shortcuts/manage-links',
+    'tab_root' => 'user/%',
+  );
+
   $items['user/%user/shortcuts/manage-sets'] = array(
     'title' => 'Manage sets',
     'page callback' => 'shortcut_user_shortcuts_manage_sets_page',
