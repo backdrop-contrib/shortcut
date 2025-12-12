@@ -142,7 +142,7 @@ function shortcut_menu() {
   );
 
   $items['user/%user/shortcuts/manage-links'] = array(
-    'title' => 'Manage links',
+    'title' => 'Manage shortcuts',
     'page callback' => 'shortcut_user_shortcuts_manage_links_page',
     'page arguments' => array(1),
     'access callback' => 'shortcut_user_shortcuts_access',
@@ -363,8 +363,8 @@ function shortcut_user_shortcuts_manage_sets_page($account) {
     }
     $cells[] = array('data' => array('#markup' => $activate_markup), 'class' => array('shortcut-set-operation'));
 
-    $list_links = l(t('List links'), 'user/' . $account->uid . '/shortcuts/manage-links', array('query' => array('set' => $machine)));
-    $cells[] = array('data' => array('#markup' => $list_links), 'class' => array('shortcut-set-operation'));
+    $manage_shortcuts = l(t('Manage shortcuts'), 'user/' . $account->uid . '/shortcuts/manage-links', array('query' => array('set' => $machine)));
+    $cells[] = array('data' => array('#markup' => $manage_shortcuts), 'class' => array('shortcut-set-operation'));
 
     $rename = l(t('Edit set'), 'user/' . $account->uid . '/shortcuts/manage-sets/' . $machine . '/edit');
     $cells[] = array('data' => array('#markup' => $rename), 'class' => array('shortcut-set-operation'));
@@ -820,7 +820,7 @@ function shortcut_user_shortcuts_manage_links_form_submit($form, &$form_state) {
   shortcut_user_links_reset_cache();
   shortcut_user_links_set_last_set($account->uid, $set['machine_name']);
 
-  backdrop_set_message(t('Shortcut links have been updated.'));
+  backdrop_set_message(t('Shortcuts have been updated.'));
   $form_state['redirect'] = array('user/' . $account->uid . '/shortcuts/manage-links', array('query' => array('set' => $set['machine_name'])));
 }
 
