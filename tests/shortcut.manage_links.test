@@ -1,0 +1,155 @@
+<?php
+/**
+ * @file
+ * Tests for the shortcut manage links interface.
+ */
+
+/**
+ * Tests for the shortcut manage links interface.
+ *
+ * @group Shortcut
+ */
+class ShortcutManageLinksTableDragTestCase extends BackdropWebTestCase {
+
+  /**
+   * The account interacting with the shortcut UI during tests.
+   *
+   * @var object
+   */
+  protected $account;
+
+  /**
+   * Active shortcut set metadata for the logged-in account.
+   *
+   * @var array
+   */
+  protected $shortcutSet;
+
+  /**
+   * The ID of the test shortcut link.
+   *
+   * @var int
+   */
+  protected $linkId;
+
+  /**
+   * The ID of a disabled shortcut link used for assertions.
+   *
+   * @var int
+   */
+  protected $disabledLinkId;
+
+  /**
+   * {@inheritdoc}
+   */
+  protected function setUp() {
+    parent::setUp(array('shortcut'));
+
+    $this->account = $this->backdropCreateUser(array('manage own shortcuts'));
+    $this->backdropLogin($this->account);
+
+    $this->shortcutSet = $this->createShortcutSet('Test shortcuts');
+    $this->linkId = $this->createShortcutLink('Dashboard', 'user', 1, -10);
+    $this->disabledLinkId = $this->createShortcutLink('Admin', 'admin', 0, 0);
+  }
+
+  /**
+   * Ensures the manage links table exposes checkbox toggles.
+   */
+  public function testManageLinksCheckboxesRender() {
+    $this->backdropGet('user/' . $this->account->uid . '/shortcuts/manage-links', array('query' => array('set' => $this->shortcutSet['machine_name'])));
+
+    $header = $this->xpath('//th[contains(concat(" ", normalize-space(@class), " "), " checkbox ") and normalize-space(text())="Enabled"]');
+    $this->assertTrue(!empty($header), 'Enabled column header is present.');
+
+    $enabled_checkbox = $this->xpath('//input[@type="checkbox" and @name="shortcuts[shortcut-' . $this->linkId . '][enabled]"]');
+    $this->assertTrue(!empty($enabled_checkbox), 'Enabled shortcut exposes a checkbox.');
+    $this->assertTrue(isset($enabled_checkbox[0]['checked']), 'Enabled shortcut checkbox is checked by default.');
+
+    $disabled_checkbox = $this->xpath('//input[@type="checkbox" and @name="shortcuts[shortcut-' . $this->disabledLinkId . '][enabled]"]');
+    $this->assertTrue(!empty($disabled_checkbox), 'Disabled shortcut exposes a checkbox.');
+    $this->assertFalse(isset($disabled_checkbox[0]['checked']), 'Disabled shortcut checkbox is unchecked by default.');
+
+    $disabled_label = $this->xpath('//tr[contains(@class,"shortcut-link")]/td[1]/span[contains(@class,"shortcut-disabled-note") and contains(text(), "disabled")]');
+    $this->assertTrue(!empty($disabled_label), 'Disabled shortcut row displays a disabled note.');
+  }
+
+  /**
+   * Disabling a shortcut via the manage links form persists state.
+   */
+  public function testDisableShortcutViaManageLinksForm() {
+    $this->backdropGet('user/' . $this->account->uid . '/shortcuts/manage-links', array('query' => array('set' => $this->shortcutSet['machine_name'])));
+
+    $edit = array(
+      'shortcuts[shortcut-' . $this->linkId . '][weight]' => -10,
+      'shortcuts[shortcut-' . $this->linkId . '][enabled]' => 0,
+      'shortcuts[shortcut-' . $this->linkId . '][lid]' => $this->linkId,
+      'shortcuts[shortcut-' . $this->disabledLinkId . '][weight]' => 0,
+      'shortcuts[shortcut-' . $this->disabledLinkId . '][enabled]' => 0,
+      'shortcuts[shortcut-' . $this->disabledLinkId . '][lid]' => $this->disabledLinkId,
+    );
+
+    $this->backdropPost(NULL, $edit, t('Save changes'));
+
+    $links = shortcut_user_links_load($this->account->uid, $this->shortcutSet['machine_name']);
+    $this->assertTrue(empty($links['enabled']), 'No shortcuts remain in the enabled list.');
+    $this->assertFalse(empty($links['disabled']), 'Disabled shortcuts list is populated.');
+    $this->assertIdentical($links['disabled'][0]['status'], 'disabled', 'Shortcut was persisted as disabled.');
+  }
+
+  /**
+   * Prevents disabling every shortcut through the manage links form.
+   */
+  public function testDisableAllShortcutsIsRejected() {
+    $this->backdropGet('user/' . $this->account->uid . '/shortcuts/manage-links', array('query' => array('set' => $this->shortcutSet['machine_name'])));
+
+    $edit = array(
+      'shortcuts[shortcut-' . $this->linkId . '][weight]' => -10,
+      'shortcuts[shortcut-' . $this->linkId . '][enabled]' => 0,
+      'shortcuts[shortcut-' . $this->linkId . '][lid]' => $this->linkId,
+      'shortcuts[shortcut-' . $this->disabledLinkId . '][weight]' => 0,
+      'shortcuts[shortcut-' . $this->disabledLinkId . '][enabled]' => 0,
+      'shortcuts[shortcut-' . $this->disabledLinkId . '][lid]' => $this->disabledLinkId,
+    );
+
+    $this->backdropPost(NULL, $edit, t('Save changes'));
+
+    $this->assertText('You must leave at least one shortcut enabled.');
+    $this->assertNoText('Shortcut links have been updated.');
+
+    $links = shortcut_user_links_load($this->account->uid, $this->shortcutSet['machine_name']);
+    $this->assertFalse(empty($links['enabled']), 'At least one shortcut remains enabled.');
+    $this->assertIdentical($links['enabled'][0]['lid'], (int) $this->linkId, 'Original shortcut stays enabled.');
+  }
+
+  /**
+   * Creates a shortcut set for the logged in account.
+   */
+  protected function createShortcutSet($label) {
+    $machine = shortcut_user_generate_machine_name($this->account->uid, $label);
+    shortcut_user_set_create($this->account->uid, $label, $machine, TRUE, FALSE);
+    $sets = shortcut_user_sets_load($this->account->uid);
+    return $sets[$machine];
+  }
+
+  /**
+   * Adds a shortcut link to the active set.
+   */
+  protected function createShortcutLink($title, $path, $status = 1, $weight = 0) {
+    $lid = db_insert('shortcut_user_links')
+      ->fields(array(
+        'sid' => $this->shortcutSet['sid'],
+        'title' => $title,
+        'path' => $path,
+        'weight' => $weight,
+        'status' => $status,
+        'created' => REQUEST_TIME,
+        'changed' => REQUEST_TIME,
+      ))
+      ->execute();
+
+    shortcut_user_links_reset_cache();
+    return (int) $lid;
+  }
+
+}

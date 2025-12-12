@@ -1,0 +1,7 @@
+name = Shortcut
+type = module
+description = Provides a sticky shortcut bar placeholder on every page.
+package = User Interface
+backdrop = 1.x
+maintainers[alanmels] = Alan Mels
+maintainers_wanted = TRUE

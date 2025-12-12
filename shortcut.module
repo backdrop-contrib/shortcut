@@ -1,0 +1,2543 @@
+<?php
+
+if (!defined('SHORTCUT_DEFAULT_ACTIVE_COLOR')) {
+  define('SHORTCUT_DEFAULT_ACTIVE_COLOR', '#0073BD');
+}
+
+/**
+ * @file
+ * Provides the Shortcut sticky toolbar.
+ */
+
+/**
+ * Returns the default color used for the active set badge.
+ */
+function shortcut_toolbar_default_color() {
+  return SHORTCUT_DEFAULT_ACTIVE_COLOR;
+}
+
+/**
+ * Normalizes a hex color string and applies a fallback when needed.
+ */
+function shortcut_toolbar_normalize_color($value, $fallback = NULL) {
+  $value = is_string($value) ? trim($value) : '';
+
+  if ($value === '') {
+    return isset($fallback) ? $fallback : '';
+  }
+
+  if ($value[0] !== '#') {
+    $value = '#' . $value;
+  }
+
+  if (preg_match('/^#[0-9a-fA-F]{6}$/', $value)) {
+    return strtoupper($value);
+  }
+
+  return isset($fallback) ? $fallback : '';
+}
+
+/**
+ * Element validator ensuring color inputs store normalized hex values.
+ */
+function shortcut_user_set_color_validate($element, &$form_state, $form) {
+  $normalized = shortcut_toolbar_normalize_color($element['#value'], shortcut_toolbar_default_color());
+  form_set_value($element, $normalized, $form_state);
+}
+
+/**
+ * Implements hook_theme().
+ */
+function shortcut_theme($existing, $type, $theme, $path) {
+  return array(
+    'shortcut_user_shortcuts_manage_links_form' => array(
+      'render element' => 'form',
+    ),
+  );
+}
+
+/**
+ * Implements hook_preprocess_page().
+ */
+function shortcut_preprocess_page(&$variables) {
+  static $toolbar_added = FALSE;
+
+  // Only modify full HTML responses, and ensure we only inject once.
+  if ($toolbar_added || !backdrop_is_html()) {
+    return;
+  }
+
+  if (!shortcut_user_can_use_toolbar()) {
+    return;
+  }
+
+  $admin_bar_active = shortcut_admin_bar_is_active();
+
+  // Normalize page class collection so we can safely append our markers.
+  if (!isset($variables['classes']) || $variables['classes'] === NULL) {
+    $variables['classes'] = array();
+  }
+  elseif (is_string($variables['classes'])) {
+    $variables['classes'] = preg_split('/\s+/', trim($variables['classes']));
+  }
+
+  // Signal to CSS that the toolbar is present so body spacing can adjust.
+  if (!in_array('shortcut-toolbar-active', $variables['classes'])) {
+    $variables['classes'][] = 'shortcut-toolbar-active';
+  }
+  if (!in_array('shortcut-toolbar-visible', $variables['classes'])) {
+    $variables['classes'][] = 'shortcut-toolbar-visible';
+  }
+
+  if ($admin_bar_active && !in_array('shortcut-toolbar-with-admin-bar', $variables['classes'])) {
+    $variables['classes'][] = 'shortcut-toolbar-with-admin-bar';
+  }
+
+  // Make sure the toolbar library is present in the page assets.
+  backdrop_add_library('shortcut', 'shortcut_bar', TRUE);
+
+  $toolbar_build = shortcut_toolbar_build();
+  $toolbar_build['#weight'] = 101;
+
+  if (isset($variables['page_bottom']) && is_array($variables['page_bottom'])) {
+    $variables['page_bottom']['shortcut_toolbar'] = $toolbar_build;
+  }
+  else {
+    $markup = backdrop_render($toolbar_build);
+    $variables['page_bottom'] = isset($variables['page_bottom']) ? $variables['page_bottom'] . $markup : $markup;
+  }
+  $toolbar_added = TRUE;
+}
+
+/**
+ * Implements hook_permission().
+ */
+function shortcut_permission() {
+  return array(
+    'manage own shortcuts' => array(
+      'title' => t('Manage own shortcuts'),
+      'description' => t('Allow users to manage their personal shortcut sets.'),
+    ),
+    'administer shortcuts' => array(
+      'title' => t('Administer all shortcuts'),
+      'description' => t('Manage shortcut sets for all users.'),
+    ),
+  );
+}
+
+/**
+ * Implements hook_menu().
+ */
+function shortcut_menu() {
+  $items = array();
+
+  $items['user/%user/shortcuts'] = array(
+    'title' => 'Shortcuts',
+    'page callback' => 'shortcut_user_shortcuts_page',
+    'page arguments' => array(1),
+    'access callback' => 'shortcut_user_shortcuts_access',
+    'access arguments' => array(1),
+    'type' => MENU_LOCAL_TASK,
+    'weight' => 5,
+  );
+
+  $items['user/%user/shortcuts/manage-links'] = array(
+    'title' => 'Manage links',
+    'page callback' => 'shortcut_user_shortcuts_manage_links_page',
+    'page arguments' => array(1),
+    'access callback' => 'shortcut_user_shortcuts_access',
+    'access arguments' => array(1),
+    'type' => MENU_LOCAL_TASK,
+    'tab_parent' => 'user/%/shortcuts',
+    'tab_root' => 'user/%',
+    'weight' => 0,
+  );
+
+  $items['user/%user/shortcuts/manage-sets'] = array(
+    'title' => 'Manage sets',
+    'page callback' => 'shortcut_user_shortcuts_manage_sets_page',
+    'page arguments' => array(1),
+    'access callback' => 'shortcut_user_shortcuts_access',
+    'access arguments' => array(1),
+    'type' => MENU_LOCAL_TASK,
+    'tab_parent' => 'user/%/shortcuts',
+    'tab_root' => 'user/%',
+    'weight' => 5,
+  );
+
+  $items['user/%user/shortcuts/manage-links/add'] = array(
+    'title' => 'Add shortcut',
+    'page callback' => 'backdrop_get_form',
+    'page arguments' => array('shortcut_user_link_add_form', 1),
+    'access callback' => 'shortcut_user_link_add_access',
+    'access arguments' => array(1),
+    'type' => MENU_LOCAL_ACTION,
+    'tab_parent' => 'user/%/shortcuts/manage-links',
+    'tab_root' => 'user/%',
+    'weight' => -10,
+    'options' => array(
+      'attributes' => array('class' => array('button', 'button-action')),
+    ),
+  );
+  $items['user/%user/shortcuts/manage-sets/add'] = array(
+    'title' => 'Add shortcut set',
+    'page callback' => 'backdrop_get_form',
+    'page arguments' => array('shortcut_user_set_add_form', 1),
+    'access callback' => 'shortcut_user_shortcuts_access',
+    'access arguments' => array(1),
+    'type' => MENU_LOCAL_ACTION,
+    'tab_parent' => 'user/%/shortcuts/manage-sets',
+    'tab_root' => 'user/%',
+    'weight' => -10,
+    'options' => array(
+      'attributes' => array('class' => array('button', 'button-action')),
+    ),
+  );
+
+  $items['user/%user/shortcuts/manage-sets/%/edit'] = array(
+    'title' => 'Edit shortcut set',
+    'page callback' => 'backdrop_get_form',
+    'page arguments' => array('shortcut_user_set_edit_form', 1, 4),
+    'access callback' => 'shortcut_user_set_route_access',
+    'access arguments' => array(1, 4),
+    'type' => MENU_VISIBLE_IN_BREADCRUMB,
+    'tab_parent' => 'user/%/shortcuts/manage-sets',
+    'tab_root' => 'user/%',
+  );
+
+  $items['user/%user/shortcuts/manage-sets/%/delete'] = array(
+    'title' => 'Delete shortcut set',
+    'page callback' => 'backdrop_get_form',
+    'page arguments' => array('shortcut_user_set_delete_form', 1, 4),
+    'access callback' => 'shortcut_user_set_delete_access',
+    'access arguments' => array(1, 4),
+    'type' => MENU_VISIBLE_IN_BREADCRUMB,
+    'tab_parent' => 'user/%/shortcuts/manage-sets',
+    'tab_root' => 'user/%',
+  );
+
+  $items['user/%user/shortcuts/manage-sets/%/activate'] = array(
+    'page callback' => 'shortcut_user_set_activate_page',
+    'page arguments' => array(1, 4),
+    'access callback' => 'shortcut_user_set_route_access',
+    'access arguments' => array(1, 4),
+    'type' => MENU_CALLBACK,
+  );
+
+  $items['shortcut/toolbar/add'] = array(
+    'page callback' => 'shortcut_toolbar_action_add',
+    'access callback' => 'shortcut_user_can_use_toolbar',
+    'type' => MENU_CALLBACK,
+    'delivery callback' => 'backdrop_json_output',
+  );
+
+  $items['shortcut/toolbar/disable'] = array(
+    'page callback' => 'shortcut_toolbar_action_disable',
+    'access callback' => 'shortcut_user_can_use_toolbar',
+    'type' => MENU_CALLBACK,
+    'delivery callback' => 'backdrop_json_output',
+  );
+
+  $items['shortcut/toolbar/remove'] = array(
+    'page callback' => 'shortcut_toolbar_action_disable',
+    'access callback' => 'shortcut_user_can_use_toolbar',
+    'type' => MENU_CALLBACK,
+    'delivery callback' => 'backdrop_json_output',
+  );
+
+  return $items;
+}
+
+/**
+ * Access callback for the shortcuts settings page.
+ */
+function shortcut_user_shortcuts_access($account) {
+  if (!is_object($account)) {
+    return FALSE;
+  }
+
+  global $user;
+  if (user_access('administer shortcuts')) {
+    return TRUE;
+  }
+
+  return ($user->uid == $account->uid) && user_access('manage own shortcuts');
+}
+
+/**
+ * Access callback for the add shortcut local action.
+ */
+function shortcut_user_link_add_access($account) {
+  if (!shortcut_user_shortcuts_access($account)) {
+    return FALSE;
+  }
+
+  $sets = shortcut_user_sets_load($account->uid);
+  return !empty($sets);
+}
+
+/**
+ * Determines whether the current user should see the shortcut toolbar.
+ */
+function shortcut_user_can_use_toolbar() {
+  return user_access('administer shortcuts') || user_access('manage own shortcuts');
+}
+
+/**
+ * Primary shortcuts page callback that redirects to the default subtab.
+ */
+function shortcut_user_shortcuts_page($account) {
+  $destination = 'user/' . $account->uid . '/shortcuts/manage-links';
+  backdrop_goto($destination);
+}
+
+/**
+ * Page callback for managing shortcut sets.
+ */
+function shortcut_user_shortcuts_manage_sets_page($account) {
+  shortcut_user_sets_ensure_default($account->uid);
+  $sets = shortcut_user_sets_load($account->uid);
+
+  $build = array();
+
+  $build['description'] = array(
+    '#type' => 'markup',
+    '#markup' => '<p>' . t('Shortcut sets let you organize different collections of quick links. Activate, rename, or delete sets below.') . '</p>',
+  );
+
+  $header = array(
+    array('data' => t('Name')),
+    array('data' => t('Color')),
+    array('data' => t('Operations'), 'colspan' => 4),
+  );
+
+  $rows = array();
+  foreach ($sets as $machine => $set) {
+    $cells = array();
+
+    $label = check_plain($set['name']);
+    $cells[] = array(
+      'data' => array('#markup' => $label),
+      'class' => array('shortcut-set-name'),
+    );
+
+    $color_value = isset($set['color']) ? $set['color'] : shortcut_toolbar_default_color();
+    $color_value = shortcut_toolbar_normalize_color($color_value, shortcut_toolbar_default_color());
+    $color_markup = '<span class="shortcut-set-color-swatch" aria-hidden="true" style="background:' . check_plain($color_value) . ';"></span>' .
+      '<span class="shortcut-set-color-value">' . check_plain($color_value) . '</span>';
+    $cells[] = array(
+      'data' => array('#markup' => $color_markup),
+      'class' => array('shortcut-set-color'),
+    );
+
+    if (!empty($set['is_default'])) {
+      $activate_markup = '<span class="shortcut-set-active-indicator" role="status">' . t('Currently active') . '</span>';
+    }
+    else {
+      $activate_markup = l(t('Make active'), 'user/' . $account->uid . '/shortcuts/manage-sets/' . $machine . '/activate', array(
+        'query' => backdrop_get_destination(),
+        'attributes' => array('class' => array('shortcut-set-activate')),
+      ));
+    }
+    $cells[] = array('data' => array('#markup' => $activate_markup), 'class' => array('shortcut-set-operation'));
+
+    $list_links = l(t('List links'), 'user/' . $account->uid . '/shortcuts/manage-links', array('query' => array('set' => $machine)));
+    $cells[] = array('data' => array('#markup' => $list_links), 'class' => array('shortcut-set-operation'));
+
+    $rename = l(t('Edit set'), 'user/' . $account->uid . '/shortcuts/manage-sets/' . $machine . '/edit');
+    $cells[] = array('data' => array('#markup' => $rename), 'class' => array('shortcut-set-operation'));
+
+    $delete_markup = l(t('Delete set'), 'user/' . $account->uid . '/shortcuts/manage-sets/' . $machine . '/delete');
+    $cells[] = array('data' => array('#markup' => $delete_markup), 'class' => array('shortcut-set-operation'));
+
+    $rows[] = array(
+      'data' => $cells,
+      'class' => array(!empty($set['is_default']) ? 'shortcut-set-row-active' : 'shortcut-set-row'),
+    );
+  }
+
+  $table = theme('table', array(
+    'header' => $header,
+    'rows' => $rows,
+    'attributes' => array('class' => array('sticky-enabled', 'tableheader-processed', 'sticky-table')),
+    'empty' => t('You do not have any shortcut sets yet.'),
+  ));
+
+  $build['sets'] = array(
+    '#type' => 'markup',
+    '#markup' => $table,
+  );
+
+  return $build;
+}
+
+/**
+ * Access callback ensuring the shortcut set exists for the route.
+ */
+function shortcut_user_set_route_access($account, $machine) {
+  if (!shortcut_user_shortcuts_access($account)) {
+    return FALSE;
+  }
+
+  return (bool) shortcut_user_set_load_single($account->uid, $machine);
+}
+
+/**
+ * Access callback for destructive shortcut set actions.
+ */
+function shortcut_user_set_delete_access($account, $machine) {
+  if (!shortcut_user_shortcuts_access($account)) {
+    return FALSE;
+  }
+
+  return (bool) shortcut_user_set_load_single($account->uid, $machine);
+}
+
+/**
+ * Page callback: activate the selected shortcut set and redirect.
+ */
+function shortcut_user_set_activate_page($account, $machine) {
+  $set = shortcut_user_set_load_single($account->uid, $machine);
+  if (!$set) {
+    return backdrop_not_found();
+  }
+
+  if (empty($set['is_default'])) {
+    shortcut_user_set_set_default($account->uid, $machine);
+    backdrop_set_message(t('Shortcut set %name is now active.', array('%name' => $set['name'])));
+  }
+
+  backdrop_goto('user/' . $account->uid . '/shortcuts/manage-sets');
+}
+
+/**
+ * Form callback: add a new shortcut set for the user.
+ */
+function shortcut_user_set_add_form($form, &$form_state, $account) {
+  $form['#account'] = $account;
+
+  $form['name'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Name'),
+    '#maxlength' => 128,
+    '#required' => TRUE,
+  );
+
+  $form['color'] = array(
+    '#type' => 'color',
+    '#title' => t('Toolbar highlight color'),
+    '#default_value' => shortcut_toolbar_default_color(),
+    '#description' => t('Pick the color used for this set when it is active in the shortcut toolbar.'),
+    '#element_validate' => array('shortcut_user_set_color_validate'),
+  );
+
+  $form['make_default'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Make this the active set'),
+    '#default_value' => 1,
+  );
+
+  $form['actions'] = array('#type' => 'actions');
+  $form['actions']['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Save'),
+  );
+
+  return $form;
+}
+
+/**
+ * Validation handler for shortcut_user_set_add_form().
+ */
+function shortcut_user_set_add_form_validate($form, &$form_state) {
+  $account = $form['#account'];
+  $name = trim($form_state['values']['name']);
+  if ($name === '') {
+    form_set_error('name', t('Enter a name for the shortcut set.'));
+  }
+  elseif (shortcut_user_set_name_exists($account->uid, $name)) {
+    form_set_error('name', t('A shortcut set with that name already exists.'));
+  }
+
+  $form_state['values']['name'] = $name;
+  $form_state['values']['color'] = shortcut_toolbar_normalize_color(isset($form_state['values']['color']) ? $form_state['values']['color'] : '', shortcut_toolbar_default_color());
+}
+
+/**
+ * Submit handler for shortcut_user_set_add_form().
+ */
+function shortcut_user_set_add_form_submit($form, &$form_state) {
+  $account = $form['#account'];
+  $name = $form_state['values']['name'];
+  $set_default = !empty($form_state['values']['make_default']);
+  $machine = shortcut_user_generate_machine_name($account->uid, $name);
+  $color = isset($form_state['values']['color']) ? $form_state['values']['color'] : shortcut_toolbar_default_color();
+
+  shortcut_user_set_create($account->uid, $name, $machine, $set_default, FALSE, $color);
+
+  if ($set_default) {
+    backdrop_set_message(t('Shortcut set %name has been created and set as your active set.', array('%name' => $name)));
+  }
+  else {
+    backdrop_set_message(t('Shortcut set %name has been created.', array('%name' => $name)));
+  }
+
+  $form_state['redirect'] = 'user/' . $account->uid . '/shortcuts/manage-sets';
+}
+
+/**
+ * Form callback: rename an existing shortcut set.
+ */
+function shortcut_user_set_edit_form($form, &$form_state, $account, $machine) {
+  $set = shortcut_user_set_load_single($account->uid, $machine);
+  if (!$set) {
+    return array('#markup' => t('Shortcut set not found.'));
+  }
+
+  $form['#account'] = $account;
+  $form['#machine'] = $machine;
+  $form['#set'] = $set;
+
+  $form['name'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Name'),
+    '#maxlength' => 128,
+    '#required' => TRUE,
+    '#default_value' => $set['name'],
+  );
+
+  $form['color'] = array(
+    '#type' => 'color',
+    '#title' => t('Toolbar highlight color'),
+    '#default_value' => isset($set['color']) ? $set['color'] : shortcut_toolbar_default_color(),
+    '#description' => t('Update the color shown for this set when it is active in the shortcut toolbar.'),
+    '#element_validate' => array('shortcut_user_set_color_validate'),
+  );
+
+  $form['actions'] = array('#type' => 'actions');
+  $form['actions']['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Save'),
+  );
+
+  return $form;
+}
+
+/**
+ * Validation handler for shortcut_user_set_edit_form().
+ */
+function shortcut_user_set_edit_form_validate($form, &$form_state) {
+  $account = $form['#account'];
+  $machine = $form['#machine'];
+  $name = trim($form_state['values']['name']);
+
+  if ($name === '') {
+    form_set_error('name', t('Enter a name for the shortcut set.'));
+  }
+  elseif (shortcut_user_set_name_exists($account->uid, $name, $machine)) {
+    form_set_error('name', t('A shortcut set with that name already exists.'));
+  }
+
+  $form_state['values']['name'] = $name;
+  $form_state['values']['color'] = shortcut_toolbar_normalize_color(isset($form_state['values']['color']) ? $form_state['values']['color'] : '', shortcut_toolbar_default_color());
+}
+
+/**
+ * Submit handler for shortcut_user_set_edit_form().
+ */
+function shortcut_user_set_edit_form_submit($form, &$form_state) {
+  $account = $form['#account'];
+  $machine = $form['#machine'];
+  $name = $form_state['values']['name'];
+  $color = isset($form_state['values']['color']) ? $form_state['values']['color'] : shortcut_toolbar_default_color();
+
+  shortcut_user_set_rename($account->uid, $machine, $name, $color);
+  backdrop_set_message(t('Shortcut set %name has been renamed.', array('%name' => $name)));
+
+  $form_state['redirect'] = 'user/' . $account->uid . '/shortcuts/manage-sets';
+}
+
+/**
+ * Form callback: confirm deletion of a shortcut set.
+ */
+function shortcut_user_set_delete_form($form, &$form_state, $account, $machine) {
+  $set = shortcut_user_set_load_single($account->uid, $machine);
+  if (!$set) {
+    backdrop_set_message(t('Shortcut set could not be deleted.'), 'warning');
+    $form_state['redirect'] = 'user/' . $account->uid . '/shortcuts/manage-sets';
+    return array('#markup' => '');
+  }
+
+  $form['#account'] = $account;
+  $form['#machine'] = $machine;
+  $form['#set'] = $set;
+
+  $question = t('Delete shortcut set %name?', array('%name' => $set['name']));
+  $description = t('Deleting a shortcut set removes it for this user. This action cannot be undone.');
+  if (!empty($set['is_default'])) {
+    $description .= ' ' . t('Any remaining sets will continue to be available, but none will be active until you choose one.');
+  }
+
+  return confirm_form($form, $question, 'user/' . $account->uid . '/shortcuts/manage-sets', $description, t('Delete'), t('Cancel'));
+}
+
+/**
+ * Submit handler for shortcut_user_set_delete_form().
+ */
+function shortcut_user_set_delete_form_submit($form, &$form_state) {
+  $account = $form['#account'];
+  $machine = $form['#machine'];
+  $set = $form['#set'];
+
+  shortcut_user_set_delete($account->uid, $machine);
+  backdrop_set_message(t('Shortcut set %name has been deleted.', array('%name' => $set['name'])));
+
+  shortcut_user_sets_ensure_default($account->uid);
+
+  $form_state['redirect'] = 'user/' . $account->uid . '/shortcuts/manage-sets';
+}
+
+/**
+ * Page callback for managing shortcut links.
+ */
+function shortcut_user_shortcuts_manage_links_page($account) {
+  $sets = shortcut_user_sets_load($account->uid);
+
+  if (empty($sets)) {
+    $manage_sets_link = l(t('Create a shortcut set'), 'user/' . $account->uid . '/shortcuts/manage-sets/add');
+    $message = t('You do not have any shortcut sets yet. !link.', array('!link' => $manage_sets_link));
+    return array('#markup' => '<p>' . $message . '</p>');
+  }
+
+  $query = backdrop_get_query_parameters();
+  $requested_machine = isset($query['set']) ? $query['set'] : NULL;
+  if (!$requested_machine || !isset($sets[$requested_machine])) {
+    $remembered = shortcut_user_links_get_last_set($account->uid);
+    if ($remembered && isset($sets[$remembered])) {
+      $requested_machine = $remembered;
+    }
+    else {
+      $requested_machine = shortcut_user_default_set_machine_name($account->uid, $sets);
+    }
+  }
+
+  $active_set = $sets[$requested_machine];
+  shortcut_user_links_set_last_set($account->uid, $active_set['machine_name']);
+
+  $build = array();
+
+  $build['form'] = backdrop_get_form('shortcut_user_shortcuts_manage_links_form', $account, $active_set);
+
+  return $build;
+}
+
+/**
+ * Placeholder page for adding shortcuts.
+ */
+/**
+ * Form builder for managing shortcuts within a set.
+ */
+function shortcut_user_shortcuts_manage_links_form($form, &$form_state, $account, array $set) {
+  $form['#account'] = $account;
+  $form['#set'] = $set;
+  $form['#tree'] = TRUE;
+  $form['#attributes']['class'][] = 'shortcut-set-customize-form';
+  $form['#action'] = url('user/' . $account->uid . '/shortcuts/manage-links', array('query' => array('set' => $set['machine_name'])));
+
+  $links = shortcut_user_links_load($account->uid, $set['machine_name']);
+  $ordered_links = array();
+
+  if (!empty($links['enabled'])) {
+    $ordered_links = array_merge($ordered_links, $links['enabled']);
+  }
+  if (!empty($links['disabled'])) {
+    $ordered_links = array_merge($ordered_links, $links['disabled']);
+  }
+
+  if (!empty($ordered_links)) {
+    usort($ordered_links, function ($a, $b) {
+      if ($a['weight'] == $b['weight']) {
+        return strcasecmp($a['title'], $b['title']);
+      }
+      return ($a['weight'] < $b['weight']) ? -1 : 1;
+    });
+
+    foreach ($ordered_links as $link) {
+      shortcut_user_shortcuts_manage_links_form_add_link_row($form, $account, $set, $link);
+    }
+  }
+  else {
+    $form['shortcuts']['#empty'] = t('No shortcuts have been added yet.');
+  }
+
+  $form['actions'] = array('#type' => 'actions');
+  $form['actions']['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Save changes'),
+    '#button_type' => 'submit',
+  );
+
+  return $form;
+}
+
+/**
+ * Adds an individual shortcut row to the manage links table.
+ */
+function shortcut_user_shortcuts_manage_links_form_add_link_row(&$form, $account, array $set, array $link) {
+  $row_key = 'shortcut-' . $link['lid'];
+  $destination = array('destination' => 'user/' . $account->uid . '/shortcuts/manage-links?set=' . $set['machine_name']);
+
+  $form['shortcuts']['#row_keys'][] = $row_key;
+
+  $title_link = l($link['title'], $link['path']);
+  $is_enabled = ($link['status'] === 'enabled');
+  $title_markup = $title_link;
+  if (!$is_enabled) {
+    $title_markup .= ' <span class="shortcut-disabled-note">' . t('(disabled)') . '</span>';
+  }
+
+  $form['shortcuts'][$row_key] = array(
+    '#row_type' => 'link',
+    '#attributes' => array('class' => array('draggable', 'shortcut-link')),
+    'title' => array(
+      '#markup' => $title_markup,
+    ),
+    'enabled' => array(
+      '#type' => 'checkbox',
+      '#title' => t('Enable @title shortcut', array('@title' => $link['title'])),
+      '#title_display' => 'invisible',
+      '#default_value' => $is_enabled ? 1 : 0,
+      '#attributes' => array('class' => array('shortcut-enabled-toggle')),
+    ),
+    'weight' => array(
+      '#type' => 'weight',
+      '#title' => t('Weight'),
+      '#title_display' => 'invisible',
+      '#default_value' => (int) $link['weight'],
+      '#delta' => 50,
+      '#attributes' => array('class' => array('shortcut-weight')),
+    ),
+    'operations' => array(
+      '#type' => 'operations',
+      '#links' => array(
+        'edit' => array(
+          'title' => t('Edit'),
+          'href' => 'user/' . $account->uid . '/shortcuts/manage-links/' . $link['lid'] . '/edit',
+          'query' => $destination,
+        ),
+        'delete' => array(
+          'title' => t('Delete'),
+          'href' => 'user/' . $account->uid . '/shortcuts/manage-links/' . $link['lid'] . '/delete',
+          'query' => $destination,
+        ),
+      ),
+    ),
+    'lid' => array(
+      '#type' => 'value',
+      '#value' => $link['lid'],
+    ),
+  );
+}
+
+/**
+ * Adds placeholder rows to the manage links table.
+ */
+/**
+ * Submit handler for the manage links table.
+ */
+function shortcut_user_shortcuts_manage_links_form_submit($form, &$form_state) {
+  $account = $form['#account'];
+  $set = $form['#set'];
+  $timestamp = REQUEST_TIME;
+
+  $updates = array();
+  $has_enabled = FALSE;
+
+  if (!empty($form_state['values']['shortcuts'])) {
+    foreach ($form_state['values']['shortcuts'] as $row) {
+      if (empty($row['lid'])) {
+        continue;
+      }
+
+      $status = !empty($row['enabled']) ? 1 : 0;
+      $weight = isset($row['weight']) ? (int) $row['weight'] : 0;
+
+      if ($status === 1) {
+        $has_enabled = TRUE;
+      }
+
+      $updates[] = array(
+        'lid' => (int) $row['lid'],
+        'status' => $status,
+        'weight' => $weight,
+      );
+    }
+  }
+
+  if (!empty($updates) && !$has_enabled) {
+    form_set_error('shortcuts', t('You must leave at least one shortcut enabled.'));
+    return;
+  }
+
+  foreach ($updates as $update) {
+    db_update('shortcut_user_links')
+      ->fields(array(
+        'weight' => $update['weight'],
+        'status' => $update['status'],
+        'changed' => $timestamp,
+      ))
+      ->condition('lid', $update['lid'])
+      ->execute();
+  }
+
+  shortcut_user_links_reset_cache();
+  shortcut_user_links_set_last_set($account->uid, $set['machine_name']);
+
+  backdrop_set_message(t('Shortcut links have been updated.'));
+  $form_state['redirect'] = array('user/' . $account->uid . '/shortcuts/manage-links', array('query' => array('set' => $set['machine_name'])));
+}
+
+/**
+ * Form builder: add a new shortcut to a set.
+ */
+function shortcut_user_link_add_form($form, &$form_state, $account) {
+  $sets = shortcut_user_sets_load($account->uid);
+
+  if (empty($sets)) {
+    $manage_sets_link = l(t('Create a shortcut set'), 'user/' . $account->uid . '/shortcuts/manage-sets/add');
+    $message = t('You do not have any shortcut sets yet. !link.', array('!link' => $manage_sets_link));
+    return array('#markup' => '<p>' . $message . '</p>');
+  }
+
+  $query = backdrop_get_query_parameters();
+  $requested = isset($query['set']) ? $query['set'] : shortcut_user_links_get_last_set($account->uid);
+  if (!$requested || !isset($sets[$requested])) {
+    $requested = shortcut_user_default_set_machine_name($account->uid, $sets);
+  }
+
+  $set = $sets[$requested];
+  shortcut_user_links_set_last_set($account->uid, $set['machine_name']);
+
+  return shortcut_user_link_form($form, $form_state, $account, $set);
+}
+
+/**
+ * Form builder: edit an existing shortcut.
+ */
+function shortcut_user_link_edit_form($form, &$form_state, $account, $link) {
+  if (!$link) {
+    return array('#markup' => t('Shortcut not found.'));
+  }
+
+  $set = array(
+    'sid' => $link['sid'],
+    'machine_name' => $link['machine_name'],
+    'name' => isset($link['set_name']) ? $link['set_name'] : '',
+  );
+
+  shortcut_user_links_set_last_set($account->uid, $set['machine_name']);
+
+  return shortcut_user_link_form($form, $form_state, $account, $set, $link);
+}
+
+/**
+ * Shared shortcut add/edit form builder.
+ */
+function shortcut_user_link_form($form, &$form_state, $account, array $set, array $link = NULL) {
+  $form['#account'] = $account;
+  $form['#set'] = $set;
+  if ($link) {
+    $form['#link'] = $link;
+  }
+
+  $default_path = '';
+  if ($link) {
+    $default_path = shortcut_user_link_path_to_alias($link['path']);
+  }
+
+  $form['title'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Name'),
+    '#maxlength' => 255,
+    '#required' => TRUE,
+    '#default_value' => $link ? $link['title'] : '',
+  );
+
+  $form['path'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Path'),
+    '#maxlength' => 255,
+    '#required' => TRUE,
+    '#default_value' => $default_path,
+    '#description' => t('Enter an internal path such as %example or a path alias. Do not include the leading slash.', array('%example' => 'node/add')),
+  );
+
+  $form['status'] = array(
+    '#type' => 'select',
+    '#title' => t('Status'),
+    '#options' => array('enabled' => t('Enabled'), 'disabled' => t('Disabled')),
+    '#default_value' => $link ? $link['status'] : 'enabled',
+  );
+
+  $form['actions'] = array('#type' => 'actions');
+  $form['actions']['submit'] = array(
+    '#type' => 'submit',
+    '#value' => $link ? t('Save shortcut') : t('Add shortcut'),
+    '#button_type' => 'submit',
+  );
+
+  if ($link) {
+    $form['actions']['cancel'] = array(
+      '#type' => 'link',
+      '#title' => t('Cancel'),
+      '#href' => 'user/' . $account->uid . '/shortcuts/manage-links',
+      '#options' => array('query' => array('set' => $set['machine_name'])),
+      '#attributes' => array('class' => array('button', 'button-secondary')),
+    );
+  }
+
+  $form['#validate'][] = 'shortcut_user_link_form_validate';
+  $form['#submit'][] = 'shortcut_user_link_form_submit';
+
+  return $form;
+}
+
+/**
+ * Validation handler for shortcut_user_link_form().
+ */
+function shortcut_user_link_form_validate($form, &$form_state) {
+  $title = trim($form_state['values']['title']);
+  $path = trim($form_state['values']['path']);
+
+  if ($title === '') {
+    form_set_error('title', t('Enter a name for the shortcut.'));
+  }
+
+  if ($path === '') {
+    form_set_error('path', t('Enter a path for the shortcut.'));
+  }
+  else {
+    if ($path[0] === '/') {
+      $path = ltrim($path, '/');
+    }
+
+    list($base_path, $suffix) = shortcut_user_links_split_path($path);
+
+    if ($base_path === '') {
+      form_set_error('path', t('Enter a valid internal path.'));
+    }
+    else {
+      $normalized_base = backdrop_get_normal_path($base_path);
+
+      if ($normalized_base === '') {
+        form_set_error('path', t('Enter a valid internal path.'));
+      }
+      else {
+        $router_item = menu_get_item($normalized_base);
+
+        if (!$router_item) {
+          form_set_error('path', t('Enter a valid internal path.'));
+        }
+        elseif (empty($router_item['access'])) {
+          form_set_error('path', t('You do not have access to that path.'));
+        }
+        else {
+          $path = $normalized_base . $suffix;
+        }
+      }
+    }
+  }
+
+  $form_state['values']['title'] = $title;
+  $form_state['values']['path'] = $path;
+}
+
+/**
+ * Submit handler for shortcut_user_link_form().
+ */
+function shortcut_user_link_form_submit($form, &$form_state) {
+  $account = $form['#account'];
+  $set = $form['#set'];
+  $link = isset($form['#link']) ? $form['#link'] : NULL;
+  $values = $form_state['values'];
+  $status_value = ($values['status'] === 'disabled') ? 'disabled' : 'enabled';
+  $status_flag = ($status_value === 'enabled') ? 1 : 0;
+  $timestamp = REQUEST_TIME;
+
+  if ($link) {
+    db_update('shortcut_user_links')
+      ->fields(array(
+        'title' => $values['title'],
+        'path' => $values['path'],
+        'status' => $status_flag,
+        'changed' => $timestamp,
+      ))
+      ->condition('lid', $link['lid'])
+      ->execute();
+
+    backdrop_set_message(t('Shortcut %title has been updated.', array('%title' => $values['title'])));
+  }
+  else {
+    $weight = shortcut_user_links_next_weight($set['sid']);
+
+    db_insert('shortcut_user_links')
+      ->fields(array(
+        'sid' => $set['sid'],
+        'title' => $values['title'],
+        'path' => $values['path'],
+        'weight' => $weight,
+        'status' => $status_flag,
+        'created' => $timestamp,
+        'changed' => $timestamp,
+      ))
+      ->execute();
+
+    backdrop_set_message(t('Shortcut %title has been added.', array('%title' => $values['title'])));
+  }
+
+  shortcut_user_links_reset_cache();
+  shortcut_user_links_set_last_set($account->uid, $set['machine_name']);
+
+  $form_state['redirect'] = array('user/' . $account->uid . '/shortcuts/manage-links', array('query' => array('set' => $set['machine_name'])));
+}
+
+/**
+ * Confirmation form for deleting a shortcut.
+ */
+function shortcut_user_link_delete_form($form, &$form_state, $account, $link) {
+  if (!$link) {
+    return array('#markup' => t('Shortcut not found.'));
+  }
+
+  $form['#account'] = $account;
+  $form['#link'] = $link;
+
+  $question = t('Delete shortcut %title?', array('%title' => $link['title']));
+  $description = t('Deleting a shortcut removes it from the set. This action cannot be undone.');
+
+  $form['#submit'][] = 'shortcut_user_link_delete_form_submit';
+
+  return confirm_form($form, $question, 'user/' . $account->uid . '/shortcuts/manage-links', $description, t('Delete'), t('Cancel'));
+}
+
+/**
+ * Submit handler for shortcut_user_link_delete_form().
+ */
+function shortcut_user_link_delete_form_submit($form, &$form_state) {
+  $account = $form['#account'];
+  $link = $form['#link'];
+
+  db_delete('shortcut_user_links')
+    ->condition('lid', $link['lid'])
+    ->execute();
+
+  shortcut_user_links_reset_cache();
+  shortcut_user_links_set_last_set($account->uid, $link['machine_name']);
+
+  backdrop_set_message(t('Shortcut %title has been deleted.', array('%title' => $link['title'])));
+  $form_state['redirect'] = array('user/' . $account->uid . '/shortcuts/manage-links', array('query' => array('set' => $link['machine_name'])));
+}
+
+/**
+ * Loads shortcuts for the provided user and set.
+ */
+function shortcut_user_links_load($uid, $machine) {
+  $cache = &backdrop_static(__FUNCTION__, array());
+  $cache_id = $uid . ':' . $machine;
+
+  if (!isset($cache[$cache_id])) {
+    $links = array('enabled' => array(), 'disabled' => array());
+    $set = shortcut_user_set_load_single($uid, $machine);
+
+    if ($set) {
+      $query = db_select('shortcut_user_links', 'l')
+        ->fields('l', array('lid', 'title', 'path', 'weight', 'status'))
+        ->condition('sid', $set['sid'])
+        ->orderBy('status', 'DESC')
+        ->orderBy('weight', 'ASC')
+        ->orderBy('title', 'ASC');
+
+      foreach ($query->execute() as $record) {
+        $status_key = $record->status ? 'enabled' : 'disabled';
+        $links[$status_key][] = array(
+          'lid' => (int) $record->lid,
+          'title' => $record->title,
+          'path' => $record->path,
+          'weight' => (int) $record->weight,
+          'status' => $status_key,
+          'sid' => (int) $set['sid'],
+          'machine_name' => $set['machine_name'],
+        );
+      }
+    }
+
+    $cache[$cache_id] = $links;
+  }
+
+  return $cache[$cache_id];
+}
+
+/**
+ * Resets the shortcut links static cache.
+ */
+function shortcut_user_links_reset_cache() {
+  backdrop_static_reset('shortcut_user_links_load');
+}
+
+/**
+ * Remembers the last shortcut set viewed for a user.
+ */
+function shortcut_user_links_set_last_set($uid, $machine) {
+  if (!isset($_SESSION['shortcut_user_links_last'])) {
+    $_SESSION['shortcut_user_links_last'] = array();
+  }
+  $_SESSION['shortcut_user_links_last'][$uid] = $machine;
+}
+
+/**
+ * Retrieves the last shortcut set viewed for a user.
+ */
+function shortcut_user_links_get_last_set($uid) {
+  return isset($_SESSION['shortcut_user_links_last'][$uid]) ? $_SESSION['shortcut_user_links_last'][$uid] : NULL;
+}
+
+/**
+ * Splits a shortcut path into the base path and any query or fragment suffix.
+ */
+function shortcut_user_links_split_path($path) {
+  $path = (string) $path;
+  $length = strlen($path);
+  if ($length === 0) {
+    return array('', '');
+  }
+
+  $split = strcspn($path, '?#');
+  if ($split === $length) {
+    return array($path, '');
+  }
+
+  return array(substr($path, 0, $split), substr($path, $split));
+}
+
+/**
+ * Converts an internal shortcut path to its alias, preserving suffixes.
+ */
+function shortcut_user_link_path_to_alias($path) {
+  list($base, $suffix) = shortcut_user_links_split_path($path);
+
+  if ($base === '') {
+    return $suffix;
+  }
+
+  $alias = backdrop_get_path_alias($base);
+
+  return $alias . $suffix;
+}
+
+/**
+ * Determines the next weight value for a shortcut set.
+ */
+function shortcut_user_links_next_weight($sid) {
+  $result = db_select('shortcut_user_links', 'l')
+    ->condition('sid', $sid)
+    ->fields('l', array('weight'))
+    ->orderBy('weight', 'DESC')
+    ->range(0, 1)
+    ->execute()
+    ->fetchField();
+
+  return isset($result) ? ((int) $result) + 1 : 0;
+}
+
+/**
+ * Seeds a shortcut set with default shortcut links if none exist.
+ */
+function shortcut_user_links_initialize_set($sid) {
+  if (empty($sid)) {
+    return;
+  }
+
+  $count = db_select('shortcut_user_links', 'l')
+    ->condition('sid', $sid)
+    ->countQuery()
+    ->execute()
+    ->fetchField();
+
+  if ($count) {
+    return;
+  }
+
+  $timestamp = REQUEST_TIME;
+  foreach (shortcut_user_links_default_seed_items() as $item) {
+    db_insert('shortcut_user_links')
+      ->fields(array(
+        'sid' => $sid,
+        'title' => $item['title'],
+        'path' => $item['path'],
+        'weight' => $item['weight'],
+        'status' => 1,
+        'created' => $timestamp,
+        'changed' => $timestamp,
+      ))
+      ->execute();
+  }
+}
+
+/**
+ * Default shortcut links shown for newly created shortcut sets.
+ */
+function shortcut_user_links_default_seed_items() {
+  return array(
+    array(
+      'title' => t('Add content'),
+      'path' => 'node/add',
+      'weight' => -50,
+    ),
+    array(
+      'title' => t('Find content'),
+      'path' => 'admin/content',
+      'weight' => -49,
+    ),
+    array(
+      'title' => t('Manage modules'),
+      'path' => 'admin/modules',
+      'weight' => -48,
+    ),
+  );
+}
+
+/**
+ * Menu loader: loads a single shortcut link record.
+ */
+function shortcut_link_load($lid) {
+  $query = db_select('shortcut_user_links', 'l');
+  $query->innerJoin('shortcut_user_sets', 's', 's.sid = l.sid');
+  $query->fields('l');
+  $query->fields('s', array('uid', 'machine_name', 'name'));
+  $record = $query
+    ->condition('l.lid', $lid)
+    ->execute()
+    ->fetchObject();
+
+  if (!$record) {
+    return FALSE;
+  }
+
+  return array(
+    'lid' => (int) $record->lid,
+    'sid' => (int) $record->sid,
+    'uid' => (int) $record->uid,
+    'title' => $record->title,
+    'path' => $record->path,
+    'weight' => (int) $record->weight,
+    'status' => $record->status ? 'enabled' : 'disabled',
+    'machine_name' => $record->machine_name,
+    'set_name' => $record->name,
+  );
+}
+
+/**
+ * Access callback ensuring a shortcut link belongs to the account context.
+ */
+function shortcut_user_link_route_access($account, $link) {
+  if (!$link || !shortcut_user_shortcuts_access($account)) {
+    return FALSE;
+  }
+
+  if (user_access('administer shortcuts')) {
+    return TRUE;
+  }
+
+  return $link['uid'] == $account->uid;
+}
+
+/**
+ * Theme function for the shortcut manage-links form.
+ */
+function theme_shortcut_user_shortcuts_manage_links_form($variables) {
+  $form = $variables['form'];
+  $output = '';
+
+  if (isset($form['toggle'])) {
+    $output .= backdrop_render($form['toggle']);
+    unset($form['toggle']);
+  }
+
+  $header = array(
+    array('data' => t('Shortcut')),
+    array('data' => t('Enabled'), 'class' => array('checkbox')),
+    array('data' => t('Weight'), 'class' => array('tabledrag-hide')),
+    array('data' => t('Operations')),
+  );
+
+  $rows = array();
+  $hidden_elements = '';
+
+  if (isset($form['shortcuts']['#row_keys'])) {
+    foreach ($form['shortcuts']['#row_keys'] as $row_key) {
+      if (!isset($form['shortcuts'][$row_key])) {
+        continue;
+      }
+
+      $row_element = &$form['shortcuts'][$row_key];
+      $row_type = isset($row_element['#row_type']) ? $row_element['#row_type'] : 'link';
+      $row_attributes = isset($row_element['#attributes']) ? $row_element['#attributes'] : array();
+      $row_classes = isset($row_attributes['class']) ? $row_attributes['class'] : array();
+
+      $table_row = array(
+        'data' => array(),
+        'class' => $row_classes,
+      );
+
+      if ($row_type !== 'link') {
+        continue;
+      }
+
+      $title_cell = backdrop_render($row_element['title']);
+      $enabled_cell = backdrop_render($row_element['enabled']);
+      $weight_cell = backdrop_render($row_element['weight']);
+      $operations_cell = backdrop_render($row_element['operations']);
+
+      $table_row['data'][] = array('data' => $title_cell);
+      $table_row['data'][] = array('data' => $enabled_cell, 'class' => array('checkbox'));
+      $table_row['data'][] = array('data' => $weight_cell, 'class' => array('tabledrag-hide'));
+      $table_row['data'][] = array('data' => $operations_cell);
+
+      if (isset($row_element['lid'])) {
+        $hidden_elements .= backdrop_render($row_element['lid']);
+      }
+
+      $row_element['#printed'] = TRUE;
+      $rows[] = $table_row;
+    }
+  }
+
+  if (isset($form['shortcuts']['#row_keys'])) {
+    unset($form['shortcuts']['#row_keys']);
+  }
+  if (isset($form['shortcuts'])) {
+    $form['shortcuts']['#printed'] = TRUE;
+  }
+
+  $attributes = array(
+    'id' => 'shortcuts',
+    'class' => array('sticky-enabled', 'sticky-table', 'shortcut-set-customize', 'tableheader-processed'),
+  );
+
+  $table_options = array(
+    'header' => $header,
+    'rows' => $rows,
+    'attributes' => $attributes,
+  );
+  if (isset($form['shortcuts']['#empty'])) {
+    $table_options['empty'] = $form['shortcuts']['#empty'];
+  }
+
+  $output .= theme('table', $table_options);
+  $output .= $hidden_elements;
+
+  if (isset($form['actions'])) {
+    $output .= backdrop_render($form['actions']);
+    unset($form['actions']);
+  }
+
+  backdrop_add_tabledrag('shortcuts', 'order', 'sibling', 'shortcut-weight');
+
+  $output .= backdrop_render_children($form);
+
+  return $output;
+}
+
+/**
+ * Builds the form allowing users to switch or create shortcut sets.
+ */
+function shortcut_set_switch_form($form, &$form_state, $account) {
+  $uid = $account->uid;
+  $sets = shortcut_user_sets_load($uid);
+  $default_machine = shortcut_user_default_set_machine_name($uid, $sets);
+
+  $options = array();
+  foreach ($sets as $machine => $set) {
+    $options[$machine] = $set['name'];
+  }
+
+  $form['set'] = array(
+    '#type' => 'radios',
+    '#title' => t('Choose a set of shortcuts to use'),
+    '#options' => $options + array('new' => t('New set')),
+    '#default_value' => $default_machine,
+    '#required' => TRUE,
+  );
+
+  $form['new'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Name'),
+    '#title_display' => 'invisible',
+    '#maxlength' => 128,
+    '#description' => t('The new set starts empty. Add the shortcuts you need after creating it.'),
+    '#states' => array(
+      'visible' => array(
+        ':input[name="set"]' => array('value' => 'new'),
+      ),
+      'required' => array(
+        ':input[name="set"]' => array('value' => 'new'),
+      ),
+    ),
+  );
+
+  $form['#tree'] = TRUE;
+  $form['#uid'] = $uid;
+  $form['#account'] = $account;
+
+  $form['actions'] = array('#type' => 'actions');
+  $form['actions']['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Change set'),
+  );
+
+  $form['#validate'][] = 'shortcut_set_switch_form_validate';
+  $form['#submit'][] = 'shortcut_set_switch_form_submit';
+
+  return $form;
+}
+
+/**
+ * Validation handler for shortcut_set_switch_form().
+ */
+function shortcut_set_switch_form_validate($form, &$form_state) {
+  $values = $form_state['values'];
+  if ($values['set'] === 'new') {
+    $name = trim($values['new']);
+    if ($name === '') {
+      form_set_error('new', t('Enter a name for the new shortcut set.'));
+    }
+  }
+}
+
+/**
+ * Submit handler for shortcut_set_switch_form().
+ */
+function shortcut_set_switch_form_submit($form, &$form_state) {
+  $values = $form_state['values'];
+  $uid = $form['#uid'];
+
+  if ($values['set'] === 'new') {
+    $name = trim($values['new']);
+    $machine = shortcut_user_generate_machine_name($uid, $name);
+    shortcut_user_set_create($uid, $name, $machine, TRUE, FALSE, shortcut_toolbar_default_color());
+    backdrop_set_message(t('Shortcut set %name has been created and set as your default.', array('%name' => $name)));
+  }
+  else {
+    shortcut_user_set_set_default($uid, $values['set']);
+    $sets = shortcut_user_sets_load($uid);
+    $label = isset($sets[$values['set']]) ? $sets[$values['set']]['name'] : $values['set'];
+    backdrop_set_message(t('Shortcut set %name is now your default.', array('%name' => $label)));
+  }
+
+  $form_state['redirect'] = current_path();
+}
+
+/**
+ * Builds the render array representing the shortcut toolbar.
+ */
+function shortcut_toolbar_build(array $context = array()) {
+  global $user;
+
+  $uid = isset($user->uid) ? (int) $user->uid : 0;
+  $set_label = '';
+  $links_markup = '';
+  $active_machine = NULL;
+  $active_color = shortcut_toolbar_default_color();
+  $path_input = isset($context['path']) ? $context['path'] : current_path();
+  $path_input = is_string($path_input) ? trim($path_input) : '';
+  if ($path_input === '') {
+    $path_input = current_path();
+  }
+
+  list($parsed_path, $parsed_query) = shortcut_toolbar_action_parse_request($path_input);
+  $current_path = $parsed_path !== '' ? $parsed_path : current_path();
+
+  if (!is_string($current_path) || $current_path === '') {
+    $current_path = current_path();
+  }
+
+  $query_parameters = array();
+  if (isset($context['query']) && is_array($context['query'])) {
+    $query_parameters = $context['query'];
+  }
+  elseif (!empty($parsed_query)) {
+    $query_parameters = $parsed_query;
+  }
+  else {
+    $query_parameters = backdrop_get_query_parameters();
+  }
+
+  $query_parameters = shortcut_toolbar_action_filter_query($query_parameters);
+  $request_string = shortcut_toolbar_request_string($current_path, $query_parameters);
+  $current_candidates = shortcut_toolbar_path_candidates($current_path);
+  $page_title = shortcut_toolbar_clean_title(isset($context['title']) ? $context['title'] : NULL);
+  if ($page_title === '') {
+    $page_title = t('This page');
+  }
+  $shortcut_state = 'missing';
+  $current_shortcut = NULL;
+
+  if ($uid) {
+    shortcut_user_sets_ensure_default($uid);
+    $sets = shortcut_user_sets_load($uid);
+    $active_machine = shortcut_user_default_set_machine_name($uid, $sets);
+
+    if ($active_machine && isset($sets[$active_machine])) {
+      $active_set = $sets[$active_machine];
+      $set_label = $active_set['name'];
+      if (!empty($active_set['color'])) {
+        $active_color = $active_set['color'];
+      }
+
+        $shortcuts = shortcut_user_links_load($uid, $active_machine);
+        $enabled = !empty($shortcuts['enabled']) ? $shortcuts['enabled'] : array();
+
+        if (!empty($current_candidates)) {
+          $current_shortcut = shortcut_toolbar_action_find_link($shortcuts, $current_candidates);
+          if ($current_shortcut) {
+            $shortcut_state = ($current_shortcut['status'] === 'enabled') ? 'enabled' : 'disabled';
+          }
+        }
+
+      if (!empty($enabled)) {
+        $items = array();
+        foreach ($enabled as $shortcut) {
+          $items[] = array(
+            'title' => check_plain($shortcut['title']),
+            'href' => $shortcut['path'],
+            'attributes' => array('class' => array('shortcut-toolbar__link')),
+          );
+        }
+        $links_markup = theme('links', array(
+          'links' => $items,
+          'attributes' => array('class' => array('shortcut-toolbar__links', 'clearfix')),
+        ));
+      }
+    }
+  }
+
+  if ($links_markup === '') {
+    $links_markup = '<ul class="shortcut-toolbar__links shortcut-toolbar__links--empty"><li class="shortcut-toolbar__empty">' . check_plain(t('No shortcuts available yet.')) . '</li></ul>';
+  }
+
+  $content = array(
+    '#type' => 'container',
+    '#attributes' => array('class' => array('shortcut-toolbar__content')),
+  );
+
+  $main = array(
+    '#type' => 'container',
+    '#attributes' => array('class' => array('shortcut-toolbar__main')),
+  );
+
+  if ($set_label !== '') {
+    $style_attribute = $active_color !== '' ? ' style="--shortcut-active-color: ' . check_plain($active_color) . ';"' : '';
+    $main['active_set'] = array(
+      '#type' => 'markup',
+      '#markup' => '<div class="shortcut-toolbar__active-set" role="status"' . $style_attribute . '>' . check_plain($set_label) . '</div>',
+    );
+  }
+
+  $main['links'] = array(
+    '#type' => 'markup',
+    '#markup' => $links_markup,
+  );
+
+  $content['main'] = $main;
+
+  $meta = NULL;
+
+  if ($uid) {
+    $meta = array(
+      '#type' => 'container',
+      '#attributes' => array('class' => array('shortcut-toolbar__meta')),
+    );
+
+    $token = $uid ? backdrop_get_token(shortcut_toolbar_action_token_seed($uid, $request_string)) : '';
+
+    switch ($shortcut_state) {
+      case 'enabled':
+        $action_type = 'disable';
+        $icon_variant = 'remove';
+        $label_text = t('Disable @title shortcut', array('@title' => $page_title));
+        $pressed = 'true';
+        break;
+
+      case 'disabled':
+        $action_type = 'enable';
+        $icon_variant = 'add';
+        $label_text = t('Enable @title shortcut', array('@title' => $page_title));
+        $pressed = 'false';
+        break;
+
+      default:
+        $action_type = 'add';
+        $icon_variant = 'add';
+        $label_text = t('Add @title to shortcuts', array('@title' => $page_title));
+        $pressed = 'false';
+        break;
+    }
+
+    $button_attributes = array(
+      'data-shortcut-toolbar-action' => $action_type,
+      'data-shortcut-toolbar-request' => $request_string,
+      'data-shortcut-toolbar-title' => $page_title,
+      'data-shortcut-toolbar-add-url' => url('shortcut/toolbar/add'),
+      'data-shortcut-toolbar-disable-url' => url('shortcut/toolbar/disable'),
+      'data-shortcut-toolbar-remove-url' => url('shortcut/toolbar/disable'),
+      'aria-label' => $label_text,
+      'title' => $label_text,
+      'aria-pressed' => $pressed,
+    );
+
+    if ($token !== '') {
+      $button_attributes['data-shortcut-toolbar-token'] = $token;
+    }
+
+    $meta['action'] = array(
+      '#type' => 'container',
+      '#attributes' => array('class' => array('shortcut-toolbar__manage-icon')),
+      'button' => array(
+        '#markup' => shortcut_toolbar_manage_button_markup($icon_variant, $button_attributes),
+      ),
+    );
+
+    $options = array(
+      'attributes' => array('class' => array('shortcut-toolbar__manage')),
+    );
+    if ($active_machine) {
+      $options['query'] = array('set' => $active_machine);
+    }
+
+    $meta['manage'] = array(
+      '#type' => 'link',
+      '#title' => t('Edit shortcuts'),
+      '#href' => 'user/' . $uid . '/shortcuts/manage-links',
+      '#options' => $options,
+    );
+  }
+
+  if ($meta) {
+    $content['meta'] = $meta;
+  }
+
+  return array(
+    '#type' => 'container',
+    '#attributes' => array(
+      'class' => array('shortcut-toolbar'),
+      'role' => 'banner',
+      'aria-label' => t('Shortcut toolbar'),
+      'aria-hidden' => 'false',
+      'id' => 'shortcut-toolbar',
+      'data-shortcut-toolbar' => 'true',
+    ),
+    'content' => $content,
+    '#attached' => array(
+      'library' => array('shortcut/shortcut_bar'),
+    ),
+  );
+}
+
+/**
+ * Returns the rendered toolbar markup as a string.
+ */
+function shortcut_toolbar_output(array $context = array()) {
+  $build = shortcut_toolbar_build($context);
+  return backdrop_render($build);
+}
+
+/**
+ * Renders the toolbar manage icon with transparent glyph cutouts.
+ */
+function shortcut_toolbar_manage_icon_markup($variant) {
+  static $count = 0;
+  $count++;
+
+  $variant = ($variant === 'remove') ? 'remove' : 'add';
+  $mask_id = 'shortcut-toolbar-mask-' . $variant . '-' . $count;
+
+  $mask_segments = array(
+    '<rect x="0" y="0" width="24" height="24" fill="white" />',
+  );
+
+  $bar_attributes = 'rx="1" ry="1" fill="black"';
+  if ($variant === 'add') {
+    $mask_segments[] = '<rect x="11" y="4" width="2" height="16" ' . $bar_attributes . ' />';
+  }
+  $mask_segments[] = '<rect x="4" y="11" width="16" height="2" ' . $bar_attributes . ' />';
+
+  $mask_markup = implode('', $mask_segments);
+
+  $svg = '<svg class="shortcut-toolbar__manage-icon-svg" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false">';
+  $svg .= '<defs><mask id="' . $mask_id . '" maskUnits="userSpaceOnUse">' . $mask_markup . '</mask></defs>';
+  $svg .= '<rect x="0" y="0" width="24" height="24" rx="4" fill="#ffffff" mask="url(#' . $mask_id . ')" />';
+  $svg .= '<rect x="0.75" y="0.75" width="22.5" height="22.5" rx="3.25" ry="3.25" fill="none" stroke="#ffffff" stroke-width="1.5" stroke-opacity="0.6" />';
+  $svg .= '</svg>';
+
+  return $svg;
+}
+
+/**
+ * Builds the interactive manage button element markup.
+ */
+function shortcut_toolbar_manage_button_markup($variant, array $attributes = array()) {
+  $variant = ($variant === 'remove') ? 'remove' : 'add';
+
+  if (!isset($attributes['type'])) {
+    $attributes['type'] = 'button';
+  }
+
+  if (!isset($attributes['class'])) {
+    $attributes['class'] = array();
+  }
+  elseif (!is_array($attributes['class'])) {
+    $attributes['class'] = array($attributes['class']);
+  }
+
+  $attributes['class'][] = 'shortcut-toolbar__manage-button';
+  $attributes['class'][] = 'shortcut-toolbar__manage-button--' . $variant;
+  if ($variant === 'remove' && !isset($attributes['aria-haspopup'])) {
+    $attributes['aria-haspopup'] = 'dialog';
+  }
+  if (!isset($attributes['autocomplete'])) {
+    $attributes['autocomplete'] = 'off';
+  }
+
+  return '<button' . backdrop_attributes($attributes) . '>' . shortcut_toolbar_manage_icon_markup($variant) . '</button>';
+}
+
+/**
+ * Normalizes and sanitizes a prospective title string.
+ */
+function shortcut_toolbar_clean_title($value = NULL, $use_fallback = FALSE) {
+  if (!isset($value)) {
+    $value = backdrop_get_title();
+  }
+
+  if (is_array($value)) {
+    $value = backdrop_render($value);
+  }
+
+  $value = (string) $value;
+  $value = strip_tags($value);
+  if ($value !== '') {
+    $value = html_entity_decode($value, ENT_QUOTES, 'UTF-8');
+  }
+  $value = preg_replace('/\s+/u', ' ', $value);
+  $value = trim($value);
+
+  if ($value === '' && $use_fallback) {
+    $value = t('This page');
+  }
+
+  if ($value !== '' && backdrop_strlen($value) > 255) {
+    $value = backdrop_substr($value, 0, 255);
+  }
+
+  return $value;
+}
+
+/**
+ * Splits a request reference into path and query components.
+ */
+function shortcut_toolbar_action_parse_request($request) {
+  $request = is_string($request) ? trim($request) : '';
+  if ($request === '') {
+    return array('', array());
+  }
+
+  $request = ltrim($request, '/');
+  $parts = explode('?', $request, 2);
+  $path = $parts[0];
+
+  $query = array();
+  if (isset($parts[1])) {
+    parse_str($parts[1], $query);
+  }
+
+  if (!is_array($query)) {
+    $query = array();
+  }
+
+  return array($path, $query);
+}
+
+/**
+ * Recursively sorts query parameter arrays for stable string generation.
+ */
+function shortcut_toolbar_action_sort_query(array $query) {
+  foreach ($query as $key => $value) {
+    if (is_array($value)) {
+      $query[$key] = shortcut_toolbar_action_sort_query($value);
+    }
+  }
+  ksort($query);
+  return $query;
+}
+
+/**
+ * Filters and orders query parameters for shortcut operations.
+ */
+function shortcut_toolbar_action_filter_query(array $query) {
+  unset($query['destination'], $query['token']);
+  return shortcut_toolbar_action_sort_query($query);
+}
+
+/**
+ * Builds a stable request string with optional query parameters.
+ */
+function shortcut_toolbar_request_string($path, array $query = array()) {
+  $path = is_string($path) ? trim($path) : '';
+  $path = ltrim($path, '/');
+
+  $query = shortcut_toolbar_action_sort_query($query);
+  if (!empty($query)) {
+    return $path . '?' . http_build_query($query, '', '&', PHP_QUERY_RFC3986);
+  }
+
+  return $path;
+}
+
+/**
+ * Generates the token seed for toolbar action requests.
+ */
+function shortcut_toolbar_action_token_seed($uid, $request) {
+  return 'shortcut-toolbar:' . (int) $uid . ':' . trim((string) $request);
+}
+
+/**
+ * Produces comparable variants for a path or alias.
+ */
+function shortcut_toolbar_path_candidates($path) {
+  if (!is_string($path) || $path === '') {
+    return array();
+  }
+
+  $candidates = array($path);
+  list($base) = shortcut_user_links_split_path($path);
+
+  $primary = $base !== '' ? $base : $path;
+  if ($primary !== $path) {
+    $candidates[] = $primary;
+  }
+
+  $normal = backdrop_get_normal_path($primary);
+  if ($normal !== '' && !in_array($normal, $candidates, TRUE)) {
+    $candidates[] = $normal;
+  }
+
+  $alias_source = $normal !== '' ? $normal : $primary;
+  if ($alias_source !== '') {
+    $alias = backdrop_get_path_alias($alias_source);
+    if ($alias !== '' && !in_array($alias, $candidates, TRUE)) {
+      $candidates[] = $alias;
+    }
+  }
+
+  return $candidates;
+}
+
+/**
+ * Prevents caching for toolbar action responses.
+ */
+function shortcut_toolbar_action_disable_cache() {
+  backdrop_add_http_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+  backdrop_add_http_header('Pragma', 'no-cache');
+  backdrop_add_http_header('Expires', '0');
+}
+
+/**
+ * Applies an HTTP status header for JSON responses.
+ */
+function shortcut_toolbar_action_set_status_header($code) {
+  $code = (int) $code;
+  $map = array(
+    400 => '400 Bad Request',
+    403 => '403 Forbidden',
+    404 => '404 Not Found',
+    405 => '405 Method Not Allowed',
+    409 => '409 Conflict',
+    500 => '500 Internal Server Error',
+  );
+
+  if (isset($map[$code])) {
+    backdrop_add_http_header('Status', $map[$code]);
+  }
+}
+
+/**
+ * Validates the per-request token for toolbar actions.
+ */
+function shortcut_toolbar_action_validate_token($uid, $request, $token) {
+  if (!$uid || $token === '') {
+    return FALSE;
+  }
+
+  return backdrop_valid_token($token, shortcut_toolbar_action_token_seed($uid, $request));
+}
+
+/**
+ * Collects and validates shared request input.
+ */
+function shortcut_toolbar_action_collect_input() {
+  global $user;
+
+  $uid = isset($user->uid) ? (int) $user->uid : 0;
+  if ($uid === 0) {
+    return array('error' => shortcut_toolbar_action_error(t('You must be logged in to manage shortcuts.'), 403));
+  }
+
+  $method = isset($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQUEST_METHOD'] : 'GET';
+  if (strcasecmp($method, 'POST') !== 0) {
+    return array('error' => shortcut_toolbar_action_error(t('Unsupported request method.'), 405));
+  }
+
+  $request = isset($_POST['request']) ? trim($_POST['request']) : '';
+  if ($request === '') {
+    return array('error' => shortcut_toolbar_action_error(t('Missing shortcut path information.'), 400));
+  }
+
+  $token = isset($_POST['token']) ? $_POST['token'] : '';
+  if (!shortcut_toolbar_action_validate_token($uid, $request, $token)) {
+    return array('error' => shortcut_toolbar_action_error(t('Invalid shortcut action token. Reload the page and try again.'), 403));
+  }
+
+  $title_raw = isset($_POST['title']) ? $_POST['title'] : '';
+  $title = shortcut_toolbar_clean_title($title_raw);
+
+  return array(
+    'uid' => $uid,
+    'request' => $request,
+    'title' => $title,
+  );
+}
+
+/**
+ * Normalizes a shortcut path candidate for storage.
+ */
+function shortcut_toolbar_action_normalize_path($path) {
+  $path = is_string($path) ? trim($path) : '';
+  if ($path === '') {
+    return FALSE;
+  }
+
+  $path = ltrim($path, '/');
+  list($base, $suffix) = shortcut_user_links_split_path($path);
+  if ($base === '') {
+    return FALSE;
+  }
+
+  $normalized_base = backdrop_get_normal_path($base);
+  if ($normalized_base === '') {
+    $normalized_base = $base;
+  }
+
+  $router_item = menu_get_item($normalized_base);
+  if (!$router_item || empty($router_item['access'])) {
+    return FALSE;
+  }
+
+  return $normalized_base . $suffix;
+}
+
+/**
+ * Prepares normalized request data for shortcut operations.
+ */
+function shortcut_toolbar_action_normalize_request($request) {
+  list($path, $query) = shortcut_toolbar_action_parse_request($request);
+  if ($path === '') {
+    return FALSE;
+  }
+
+  $normalized_path = shortcut_toolbar_action_normalize_path($path);
+  if ($normalized_path === FALSE) {
+    return FALSE;
+  }
+
+  $query = shortcut_toolbar_action_filter_query($query);
+  $stored = shortcut_toolbar_request_string($normalized_path, $query);
+
+  $candidates = shortcut_toolbar_path_candidates($stored);
+  $original_candidates = shortcut_toolbar_path_candidates($path);
+  foreach ($original_candidates as $candidate) {
+    if (!in_array($candidate, $candidates, TRUE)) {
+      $candidates[] = $candidate;
+    }
+  }
+
+  return array(
+    'path' => $path,
+    'query' => $query,
+    'normalized_path' => $normalized_path,
+    'stored' => $stored,
+    'candidates' => $candidates,
+  );
+}
+
+/**
+ * Generates a fallback title for a shortcut entry.
+ */
+function shortcut_toolbar_action_generate_title($normalized_path, $original_path = '') {
+  $title = shortcut_toolbar_clean_title($original_path);
+  if ($title !== '') {
+    return $title;
+  }
+
+  list($base) = shortcut_user_links_split_path($normalized_path);
+  if ($base !== '') {
+    $router_item = menu_get_item($base);
+    if ($router_item && !empty($router_item['title'])) {
+      $candidate = shortcut_toolbar_clean_title($router_item['title']);
+      if ($candidate !== '') {
+        return $candidate;
+      }
+    }
+
+    $segments = explode('/', $base);
+    $leaf = end($segments);
+    if ($leaf !== FALSE && $leaf !== '') {
+      $leaf = str_replace('-', ' ', $leaf);
+      $leaf = preg_replace('/\s+/u', ' ', $leaf);
+      $leaf = shortcut_toolbar_clean_title($leaf);
+      if ($leaf !== '') {
+        return $leaf;
+      }
+    }
+  }
+
+  return t('Shortcut');
+}
+
+/**
+ * Finds a matching shortcut link within a set by candidate paths.
+ */
+function shortcut_toolbar_action_find_link(array $links, array $candidates) {
+  foreach (array('enabled', 'disabled') as $group) {
+    if (empty($links[$group])) {
+      continue;
+    }
+    foreach ($links[$group] as $link) {
+      $shortcut_candidates = shortcut_toolbar_path_candidates($link['path']);
+      if (!empty(array_intersect($candidates, $shortcut_candidates))) {
+        return $link;
+      }
+    }
+  }
+
+  return FALSE;
+}
+
+/**
+ * Retrieves the active shortcut set for a user.
+ */
+function shortcut_toolbar_action_active_set($uid) {
+  $uid = (int) $uid;
+  if ($uid === 0) {
+    return FALSE;
+  }
+
+  shortcut_user_sets_ensure_default($uid);
+  $sets = shortcut_user_sets_load($uid);
+  $machine = shortcut_user_default_set_machine_name($uid, $sets);
+
+  if ($machine && isset($sets[$machine])) {
+    return $sets[$machine];
+  }
+
+  return FALSE;
+}
+
+/**
+ * Renders the toolbar markup for a supplied request context.
+ */
+function shortcut_toolbar_render_toolbar($request, $title) {
+  list($path, $query) = shortcut_toolbar_action_parse_request($request);
+  $query = shortcut_toolbar_action_filter_query($query);
+
+  $context = array(
+    'path' => $path,
+    'query' => $query,
+    'title' => $title,
+  );
+
+  return shortcut_toolbar_output($context);
+}
+
+/**
+ * Builds a success payload for toolbar AJAX operations.
+ */
+function shortcut_toolbar_action_success($operation, $message, $request, $title) {
+  return array(
+    'status' => 'success',
+    'operation' => $operation,
+    'message' => $message,
+    'toolbar' => shortcut_toolbar_render_toolbar($request, $title),
+    'messages' => theme('status_messages'),
+  );
+}
+
+/**
+ * Builds an error payload for toolbar AJAX operations.
+ */
+function shortcut_toolbar_action_error($message, $code = 400) {
+  shortcut_toolbar_action_set_status_header($code);
+  if ($message !== '') {
+    backdrop_set_message($message, 'error');
+  }
+
+  return array(
+    'status' => 'error',
+    'message' => $message,
+    'messages' => theme('status_messages'),
+  );
+}
+
+/**
+ * Handles addition of the current page to the active shortcut set.
+ */
+function shortcut_toolbar_action_add() {
+  shortcut_toolbar_action_disable_cache();
+
+  $input = shortcut_toolbar_action_collect_input();
+  if (isset($input['error'])) {
+    return $input['error'];
+  }
+
+  $uid = $input['uid'];
+  $request = $input['request'];
+  $title = $input['title'];
+
+  $normalized = shortcut_toolbar_action_normalize_request($request);
+  if ($normalized === FALSE) {
+    return shortcut_toolbar_action_error(t('The current page cannot be added to shortcuts.'), 400);
+  }
+
+  $active_set = shortcut_toolbar_action_active_set($uid);
+  if (!$active_set) {
+    return shortcut_toolbar_action_error(t('No active shortcut set is available.'), 404);
+  }
+
+  $links = shortcut_user_links_load($uid, $active_set['machine_name']);
+  $existing = shortcut_toolbar_action_find_link($links, $normalized['candidates']);
+  if ($existing) {
+    if ($existing['status'] === 'enabled') {
+      return shortcut_toolbar_action_success('noop', '', $request, $title !== '' ? $title : $existing['title']);
+    }
+
+    $timestamp = REQUEST_TIME;
+
+    db_update('shortcut_user_links')
+      ->fields(array(
+        'status' => 1,
+        'changed' => $timestamp,
+      ))
+      ->condition('lid', $existing['lid'])
+      ->execute();
+
+    shortcut_user_links_reset_cache();
+    shortcut_user_links_set_last_set($uid, $active_set['machine_name']);
+
+    return shortcut_toolbar_action_success('enable', '', $request, $existing['title']);
+  }
+
+  $stored_title = $title !== '' ? $title : shortcut_toolbar_action_generate_title($normalized['normalized_path'], $normalized['path']);
+  if ($stored_title === '') {
+    $stored_title = t('Shortcut');
+  }
+
+  $timestamp = REQUEST_TIME;
+  $weight = shortcut_user_links_next_weight($active_set['sid']);
+
+  db_insert('shortcut_user_links')
+    ->fields(array(
+      'sid' => $active_set['sid'],
+      'title' => $stored_title,
+      'path' => $normalized['stored'],
+      'weight' => $weight,
+      'status' => 1,
+      'created' => $timestamp,
+      'changed' => $timestamp,
+    ))
+    ->execute();
+
+  shortcut_user_links_reset_cache();
+  shortcut_user_links_set_last_set($uid, $active_set['machine_name']);
+
+  return shortcut_toolbar_action_success('add', '', $request, $title !== '' ? $title : $stored_title);
+}
+
+/**
+ * Handles disabling of the current page within the active shortcut set.
+ */
+function shortcut_toolbar_action_disable() {
+  shortcut_toolbar_action_disable_cache();
+
+  $input = shortcut_toolbar_action_collect_input();
+  if (isset($input['error'])) {
+    return $input['error'];
+  }
+
+  $uid = $input['uid'];
+  $request = $input['request'];
+  $title = $input['title'];
+
+  $normalized = shortcut_toolbar_action_normalize_request($request);
+  if ($normalized === FALSE) {
+    return shortcut_toolbar_action_error(t('The requested shortcut could not be located.'), 404);
+  }
+
+  $active_set = shortcut_toolbar_action_active_set($uid);
+  if (!$active_set) {
+    return shortcut_toolbar_action_error(t('No active shortcut set is available.'), 404);
+  }
+
+  $links = shortcut_user_links_load($uid, $active_set['machine_name']);
+  $existing = shortcut_toolbar_action_find_link($links, $normalized['candidates']);
+  if (!$existing) {
+    return shortcut_toolbar_action_error(t('The page is not in your shortcuts.'), 404);
+  }
+
+  if ($existing['status'] !== 'enabled') {
+    return shortcut_toolbar_action_success('noop', '', $request, $title !== '' ? $title : $existing['title']);
+  }
+
+  db_update('shortcut_user_links')
+    ->fields(array(
+      'status' => 0,
+      'changed' => REQUEST_TIME,
+    ))
+    ->condition('lid', $existing['lid'])
+    ->execute();
+
+  shortcut_user_links_reset_cache();
+  shortcut_user_links_set_last_set($uid, $active_set['machine_name']);
+
+  return shortcut_toolbar_action_success('disable', '', $request, $title !== '' ? $title : $existing['title']);
+}
+
+/**
+ * Determines whether the Admin Bar module is active for the request.
+ */
+function shortcut_admin_bar_is_active() {
+  if (!module_exists('admin_bar') || !user_access('access administration bar')) {
+    return FALSE;
+  }
+
+  if (function_exists('admin_bar_suppress') && admin_bar_suppress(FALSE)) {
+    return FALSE;
+  }
+
+  return TRUE;
+}
+
+/**
+ * Implements hook_admin_bar_output_build().
+ */
+function shortcut_admin_bar_output_build(&$content) {
+  if (!shortcut_admin_bar_is_active() || !shortcut_user_can_use_toolbar()) {
+    return;
+  }
+
+  $toggle_title = t('Hide shortcuts');
+  $toggle_label = check_plain($toggle_title);
+  $toggle_markup = '<a href="#shortcut-toolbar" id="shortcut-toolbar-toggle" class="shortcut-toolbar-toggle toggle toggle-active" role="button" aria-pressed="true" aria-expanded="true" aria-controls="shortcut-toolbar" title="' . $toggle_label . '" aria-label="' . $toggle_label . '" data-shortcut-toggle="true"><span class="admin-bar-link-icon"></span><span class="admin-bar-link-text">' . $toggle_label . '</span></a>';
+
+  $content['shortcut_toggle'] = array(
+    '#markup' => '<div class="shortcut-toolbar-toggle-container">' . $toggle_markup . '</div>',
+    '#weight' => 999,
+  );
+}
+
+/**
+ * Loads all shortcut sets for a user.
+ */
+function shortcut_user_sets_load($uid) {
+  $cache = &backdrop_static(__FUNCTION__, array());
+  if (!isset($cache[$uid])) {
+    $query = db_select('shortcut_user_sets', 's')
+      ->fields('s')
+      ->condition('uid', $uid)
+      ->orderBy('is_default', 'DESC')
+      ->orderBy('name', 'ASC');
+
+    $sets = array();
+    foreach ($query->execute() as $record) {
+      $sets[$record->machine_name] = array(
+        'sid' => $record->sid,
+        'name' => $record->name,
+        'machine_name' => $record->machine_name,
+        'is_default' => (bool) $record->is_default,
+        'color' => shortcut_toolbar_normalize_color(isset($record->color) ? $record->color : '', shortcut_toolbar_default_color()),
+        'created' => $record->created,
+        'changed' => $record->changed,
+      );
+    }
+    $cache[$uid] = $sets;
+  }
+
+  return $cache[$uid];
+}
+
+/**
+ * Resets the static cache of shortcut sets.
+ */
+function shortcut_user_sets_reset_cache($uid = NULL) {
+  $cache = &backdrop_static('shortcut_user_sets_load', array());
+  if (isset($uid)) {
+    unset($cache[$uid]);
+  }
+  else {
+    $cache = array();
+  }
+}
+
+/**
+ * Loads a single shortcut set for a user.
+ */
+function shortcut_user_set_load_single($uid, $machine) {
+  $sets = shortcut_user_sets_load($uid);
+  return isset($sets[$machine]) ? $sets[$machine] : FALSE;
+}
+
+/**
+ * Checks whether a shortcut set name exists for the user.
+ */
+function shortcut_user_set_name_exists($uid, $name, $exclude_machine = NULL) {
+  $query = db_select('shortcut_user_sets', 's')
+    ->condition('uid', $uid)
+    ->condition('name', $name);
+
+  if ($exclude_machine) {
+    $query->condition('machine_name', $exclude_machine, '<>');
+  }
+
+  return (bool) $query->countQuery()->execute()->fetchField();
+}
+
+/**
+ * Ensures a default shortcut set exists and is flagged for the user.
+ */
+function shortcut_user_sets_ensure_default($uid) {
+  $sets = shortcut_user_sets_load($uid);
+
+  if (empty($sets)) {
+    $default_name = t('My shortcuts');
+    $machine = shortcut_user_generate_machine_name($uid, $default_name);
+    shortcut_user_set_create($uid, $default_name, $machine, TRUE, FALSE, shortcut_toolbar_default_color());
+    $sets = shortcut_user_sets_load($uid);
+  }
+
+  foreach ($sets as $set) {
+    if (!empty($set['is_default'])) {
+      return;
+    }
+  }
+
+  reset($sets);
+  $first_machine = key($sets);
+  if ($first_machine !== NULL) {
+    shortcut_user_set_set_default($uid, $first_machine);
+  }
+}
+
+/**
+ * Returns the machine name of the default set for a user.
+ */
+function shortcut_user_default_set_machine_name($uid, $sets = NULL) {
+  $sets = isset($sets) ? $sets : shortcut_user_sets_load($uid);
+  foreach ($sets as $machine => $set) {
+    if (!empty($set['is_default'])) {
+      return $machine;
+    }
+  }
+
+  if (!empty($sets)) {
+    reset($sets);
+    return key($sets);
+  }
+
+  return NULL;
+}
+
+/**
+ * Generates a unique machine name for a shortcut set.
+ */
+function shortcut_user_generate_machine_name($uid, $name) {
+  $base = backdrop_clean_css_identifier(backdrop_strtolower($name));
+  if ($base === '') {
+    $base = 'shortcut-set';
+  }
+
+  $machine = $base;
+  $index = 1;
+  $existing = shortcut_user_sets_load($uid);
+  while (isset($existing[$machine])) {
+    $machine = $base . '-' . $index;
+    $index++;
+  }
+
+  return $machine;
+}
+
+/**
+ * Creates a new shortcut set for a user.
+ */
+function shortcut_user_set_create($uid, $name, $machine_name, $set_default = FALSE, $initialize_links = FALSE, $color = NULL) {
+  $initialize_links = (bool) $initialize_links;
+  $color = shortcut_toolbar_normalize_color($color, shortcut_toolbar_default_color());
+
+  $timestamp = REQUEST_TIME;
+  $sid = db_insert('shortcut_user_sets')
+    ->fields(array(
+      'uid' => $uid,
+      'name' => $name,
+      'machine_name' => $machine_name,
+      'is_default' => $set_default ? 1 : 0,
+      'color' => $color,
+      'created' => $timestamp,
+      'changed' => $timestamp,
+    ))
+    ->execute();
+
+  shortcut_user_sets_reset_cache($uid);
+
+  if ($set_default) {
+    shortcut_user_set_set_default($uid, $machine_name);
+  }
+
+  if ($initialize_links && $sid) {
+    shortcut_user_links_initialize_set($sid);
+    shortcut_user_links_reset_cache();
+  }
+
+  return $sid;
+}
+
+/**
+ * Marks the given shortcut set as default for a user.
+ */
+function shortcut_user_set_set_default($uid, $machine_name) {
+  $transaction = db_transaction();
+  try {
+    db_update('shortcut_user_sets')
+      ->fields(array('is_default' => 0))
+      ->condition('uid', $uid)
+      ->execute();
+
+    db_update('shortcut_user_sets')
+      ->fields(array(
+        'is_default' => 1,
+        'changed' => REQUEST_TIME,
+      ))
+      ->condition('uid', $uid)
+      ->condition('machine_name', $machine_name)
+      ->execute();
+  }
+  catch (Exception $e) {
+    $transaction->rollback();
+    watchdog_exception('shortcut', $e);
+  }
+
+  shortcut_user_sets_reset_cache($uid);
+}
+
+/**
+ * Renames a shortcut set.
+ */
+function shortcut_user_set_rename($uid, $machine_name, $name, $color = NULL) {
+  $fields = array(
+    'name' => $name,
+    'changed' => REQUEST_TIME,
+  );
+
+  if (isset($color)) {
+    $fields['color'] = shortcut_toolbar_normalize_color($color, shortcut_toolbar_default_color());
+  }
+
+  db_update('shortcut_user_sets')
+    ->fields($fields)
+    ->condition('uid', $uid)
+    ->condition('machine_name', $machine_name)
+    ->execute();
+
+  shortcut_user_sets_reset_cache($uid);
+}
+
+/**
+ * Deletes a shortcut set for a user.
+ */
+function shortcut_user_set_delete($uid, $machine_name) {
+  $set = shortcut_user_set_load_single($uid, $machine_name);
+  if ($set) {
+    db_delete('shortcut_user_links')
+      ->condition('sid', $set['sid'])
+      ->execute();
+  }
+
+  db_delete('shortcut_user_sets')
+    ->condition('uid', $uid)
+    ->condition('machine_name', $machine_name)
+    ->execute();
+
+  shortcut_user_sets_reset_cache($uid);
+  shortcut_user_links_reset_cache();
+}
+
+/**
+ * Implements hook_library_info().
+ */
+function shortcut_library_info() {
+  $path = backdrop_get_path('module', 'shortcut');
+
+  return array(
+    'shortcut_bar' => array(
+      'title' => t('Shortcut toolbar assets'),
+      'version' => '1.1.4',
+      'js' => array(
+        $path . '/js/shortcut.js' => array(
+          'type' => 'file',
+          'scope' => 'footer',
+        ),
+      ),
+      'css' => array(
+        $path . '/css/shortcut.css' => array(
+          'type' => 'file',
+          'media' => 'all',
+        ),
+      ),
+      'dependencies' => array(
+        array('system', 'backdrop.dialog'),
+      ),
+    ),
+  );
+}
+
+/**
+ * Implements hook_module_implements_alter().
+ */
+function shortcut_module_implements_alter(&$implementations, $hook) {
+  if ($hook === 'preprocess_page' && isset($implementations['admin_bar']) && isset($implementations['shortcut'])) {
+    $shortcut_weight = $implementations['shortcut'];
+    unset($implementations['shortcut']);
+
+    $reordered = array();
+    foreach ($implementations as $module => $weight) {
+      $reordered[$module] = $weight;
+      if ($module === 'admin_bar') {
+        $reordered['shortcut'] = $shortcut_weight;
+      }
+    }
+
+    // If admin_bar was last or missing, ensure shortcut is appended.
+    if (!isset($reordered['shortcut'])) {
+      $reordered['shortcut'] = $shortcut_weight;
+    }
+
+    $implementations = $reordered;
+  }
+}

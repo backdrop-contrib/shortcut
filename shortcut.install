@@ -1,0 +1,202 @@
+<?php
+
+if (!defined('SHORTCUT_DEFAULT_ACTIVE_COLOR')) {
+  define('SHORTCUT_DEFAULT_ACTIVE_COLOR', '#0073BD');
+}
+
+/**
+ * Installation hooks for the Shortcut module.
+ *
+ * Allows users to manage customizable lists of shortcut links with inline
+ * toolbar controls for add, enable, and disable actions.
+ */
+
+/**
+ * Implements hook_schema().
+ */
+function shortcut_schema() {
+  $schema['shortcut_user_sets'] = array(
+    'description' => 'Stores shortcut sets created by individual users.',
+    'fields' => array(
+      'sid' => array(
+        'description' => 'Primary identifier for a shortcut set.',
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'uid' => array(
+        'description' => 'The user ID that owns this shortcut set.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'name' => array(
+        'description' => 'Human-readable name for the shortcut set.',
+        'type' => 'varchar',
+        'length' => 128,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'machine_name' => array(
+        'description' => 'Machine name for the shortcut set, unique per user.',
+        'type' => 'varchar',
+        'length' => 128,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'is_default' => array(
+        'description' => 'Flag indicating this is the user\'s default shortcut set.',
+        'type' => 'int',
+        'size' => 'tiny',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'color' => array(
+        'description' => 'Hex color used for highlighting the active shortcut set in the toolbar.',
+        'type' => 'varchar',
+        'length' => 7,
+        'not null' => FALSE,
+        'default' => '',
+      ),
+      'created' => array(
+        'description' => 'Unix timestamp when the set was created.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'changed' => array(
+        'description' => 'Unix timestamp when the set was last updated.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+    ),
+    'primary key' => array('sid'),
+    'indexes' => array(
+      'uid' => array('uid'),
+    ),
+    'unique keys' => array(
+      'user_machine_name' => array('uid', 'machine_name'),
+    ),
+  );
+
+  $schema['shortcut_user_links'] = array(
+    'description' => 'Stores shortcut links assigned to shortcut sets.',
+    'fields' => array(
+      'lid' => array(
+        'description' => 'Primary identifier for a shortcut link.',
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'sid' => array(
+        'description' => 'The shortcut set ID this link belongs to.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'title' => array(
+        'description' => 'Human-readable name of the shortcut.',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'path' => array(
+        'description' => 'Backdrop path the shortcut points to.',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'weight' => array(
+        'description' => 'Ordering weight of the shortcut.',
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'status' => array(
+        'description' => 'Boolean indicator whether the shortcut is enabled (1) or disabled (0).',
+        'type' => 'int',
+        'size' => 'tiny',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 1,
+      ),
+      'created' => array(
+        'description' => 'Unix timestamp when the shortcut was created.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'changed' => array(
+        'description' => 'Unix timestamp when the shortcut was last updated.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+    ),
+    'primary key' => array('lid'),
+    'indexes' => array(
+      'sid' => array('sid'),
+    ),
+  );
+
+  return $schema;
+}
+
+/**
+ * Implements hook_install().
+ */
+function shortcut_install() {
+  // Allow authenticated users to manage their own shortcut sets by default.
+  user_role_grant_permissions(BACKDROP_AUTHENTICATED_ROLE, array('manage own shortcuts'));
+}
+
+/**
+ * Implements hook_uninstall().
+ */
+function shortcut_uninstall() {
+  db_drop_table('shortcut_user_links');
+  db_drop_table('shortcut_user_sets');
+}
+
+/**
+ * Add the shortcut links storage table.
+ */
+
+/**
+ * Add color configuration for shortcut sets.
+ */
+function shortcut_update_1101() {
+  if (!db_field_exists('shortcut_user_sets', 'color')) {
+    db_add_field('shortcut_user_sets', 'color', array(
+      'description' => 'Hex color used for highlighting the active shortcut set in the toolbar.',
+      'type' => 'varchar',
+      'length' => 7,
+      'not null' => FALSE,
+      'default' => '',
+    ));
+  }
+
+  $default_color = SHORTCUT_DEFAULT_ACTIVE_COLOR;
+
+  db_update('shortcut_user_sets')
+    ->fields(array('color' => $default_color))
+    ->condition('color', NULL, 'IS')
+    ->execute();
+
+  db_update('shortcut_user_sets')
+    ->fields(array('color' => $default_color))
+    ->condition('color', '', '=')
+    ->execute();
+
+  return t('Shortcut sets now store a custom toolbar color.');
+}

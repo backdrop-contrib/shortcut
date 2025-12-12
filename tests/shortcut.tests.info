@@ -1,0 +1,5 @@
+[ShortcutManageLinksTableDragTestCase]
+name = Manage links tabledrag behavior
+description = Ensures the manage links interface exposes status controls needed for tabledrag.
+group = Shortcut
+file = shortcut.manage_links.test
