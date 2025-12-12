@@ -10,6 +10,10 @@
     var actionState = {
         bound: false
     };
+    var switcherState = {
+        docBound: false,
+        open: null
+    };
 
     function storageAvailable() {
         try {
@@ -258,6 +262,124 @@
         }
     }
 
+    function openSetMenu($switcher) {
+        if (!$switcher || !$switcher.length) {
+            return;
+        }
+
+        if (switcherState.open && switcherState.open.get(0) !== $switcher.get(0)) {
+            closeSetMenu(switcherState.open, false);
+        }
+
+        var $toggle = $switcher.find('.shortcut-toolbar__set-toggle');
+        var $menu = $switcher.find('.shortcut-toolbar__set-menu');
+
+        $switcher.addClass('is-open');
+        $toggle.attr('aria-expanded', 'true');
+        $menu.removeAttr('hidden');
+        switcherState.open = $switcher;
+    }
+
+    function closeSetMenu($switcher, returnFocus) {
+        if (!$switcher || !$switcher.length) {
+            return;
+        }
+
+        var $toggle = $switcher.find('.shortcut-toolbar__set-toggle');
+        var $menu = $switcher.find('.shortcut-toolbar__set-menu');
+
+        $switcher.removeClass('is-open');
+        $toggle.attr('aria-expanded', 'false');
+        $menu.attr('hidden', 'hidden');
+
+        if (returnFocus) {
+            $toggle.trigger('focus');
+        }
+
+        if (switcherState.open && switcherState.open.get(0) === $switcher.get(0)) {
+            switcherState.open = null;
+        }
+    }
+
+    function focusFirstSetOption($menu) {
+        var $items = $menu.find('.shortcut-toolbar__set-option-link');
+        if ($items.length) {
+            $items.first().trigger('focus');
+        }
+    }
+
+    function focusLastSetOption($menu) {
+        var $items = $menu.find('.shortcut-toolbar__set-option-link');
+        if ($items.length) {
+            $items.last().trigger('focus');
+        }
+    }
+
+    function focusAdjacentSetOption($menu, direction) {
+        var $items = $menu.find('.shortcut-toolbar__set-option-link');
+        if (!$items.length) {
+            return;
+        }
+
+        var $active = $(document.activeElement);
+        var index = $items.index($active);
+
+        if (index === -1) {
+            index = direction > 0 ? 0 : $items.length - 1;
+        }
+        else {
+            index += direction;
+            if (index < 0) {
+                index = $items.length - 1;
+            }
+            else if (index >= $items.length) {
+                index = 0;
+            }
+        }
+
+        $items.eq(index).trigger('focus');
+    }
+
+    function bindSetSwitcherDocumentHandlers() {
+        if (switcherState.docBound) {
+            return;
+        }
+
+        $(document).on('click.shortcutSetMenu', function (event) {
+            if (!switcherState.open) {
+                return;
+            }
+
+            if ($(event.target).closest('.shortcut-toolbar__set-switcher').length === 0) {
+                closeSetMenu(switcherState.open, false);
+            }
+        });
+
+        $(document).on('focusin.shortcutSetMenu', function (event) {
+            if (!switcherState.open) {
+                return;
+            }
+
+            if ($(event.target).closest('.shortcut-toolbar__set-switcher').length === 0) {
+                closeSetMenu(switcherState.open, false);
+            }
+        });
+
+        $(document).on('keydown.shortcutSetMenu', function (event) {
+            if (!switcherState.open) {
+                return;
+            }
+
+            var key = event.key || event.keyCode;
+            if (key === 'Escape' || key === 'Esc' || key === 27) {
+                event.preventDefault();
+                closeSetMenu(switcherState.open, true);
+            }
+        });
+
+        switcherState.docBound = true;
+    }
+
     Backdrop.behaviors.shortcutToolbarToggle = {
         attach: function (context) {
             var $body = $('body');
@@ -304,6 +426,117 @@
                 });
                 state.delegated = true;
             }
+        }
+    };
+
+    Backdrop.behaviors.shortcutToolbarSetSwitcher = {
+        attach: function (context) {
+            var $switchers = $('.shortcut-toolbar__set-switcher', context).once('shortcut-set-switcher');
+            if (!$switchers.length) {
+                return;
+            }
+
+            switcherState.open = null;
+            bindSetSwitcherDocumentHandlers();
+
+            $switchers.each(function () {
+                var $switcher = $(this);
+                var $toggle = $switcher.find('.shortcut-toolbar__set-toggle');
+                var $menu = $switcher.find('.shortcut-toolbar__set-menu');
+
+                if (!$toggle.length || !$menu.length) {
+                    return;
+                }
+
+                if ($menu.attr('hidden') === undefined) {
+                    $menu.attr('hidden', 'hidden');
+                }
+
+                if (!$menu.children().length) {
+                    return;
+                }
+
+                $toggle.on('click.shortcutSet', function (event) {
+                    event.preventDefault();
+                    openSetMenu($switcher);
+                });
+
+                $switcher.on('mouseenter.shortcutSet', function () {
+                    openSetMenu($switcher);
+                });
+
+                $switcher.on('mouseleave.shortcutSet', function () {
+                    closeSetMenu($switcher, false);
+                });
+
+                $switcher.on('focusin.shortcutSet', function () {
+                    openSetMenu($switcher);
+                });
+
+                $switcher.on('focusout.shortcutSet', function (event) {
+                    var relatedTarget = event.relatedTarget || document.activeElement;
+                    if (!relatedTarget || !$switcher.has(relatedTarget).length) {
+                        closeSetMenu($switcher, false);
+                    }
+                });
+
+                $toggle.on('keydown.shortcutSet', function (event) {
+                    var key = event.key || event.keyCode;
+
+                    if (key === 'ArrowDown' || key === 40) {
+                        event.preventDefault();
+                        if (!$switcher.hasClass('is-open')) {
+                            openSetMenu($switcher);
+                        }
+                        focusFirstSetOption($menu);
+                    }
+                    else if (key === 'ArrowUp' || key === 38) {
+                        event.preventDefault();
+                        if (!$switcher.hasClass('is-open')) {
+                            openSetMenu($switcher);
+                        }
+                        focusLastSetOption($menu);
+                    }
+                    else if (key === 'Escape' || key === 'Esc' || key === 27) {
+                        if ($switcher.hasClass('is-open')) {
+                            event.preventDefault();
+                            closeSetMenu($switcher, false);
+                        }
+                    }
+                });
+
+                $menu.on('keydown.shortcutSet', function (event) {
+                    var key = event.key || event.keyCode;
+
+                    if (key === 'ArrowDown' || key === 40) {
+                        event.preventDefault();
+                        focusAdjacentSetOption($menu, 1);
+                    }
+                    else if (key === 'ArrowUp' || key === 38) {
+                        event.preventDefault();
+                        focusAdjacentSetOption($menu, -1);
+                    }
+                    else if (key === 'Home' || key === 36) {
+                        event.preventDefault();
+                        focusFirstSetOption($menu);
+                    }
+                    else if (key === 'End' || key === 35) {
+                        event.preventDefault();
+                        focusLastSetOption($menu);
+                    }
+                    else if (key === 'Escape' || key === 'Esc' || key === 27) {
+                        event.preventDefault();
+                        closeSetMenu($switcher, true);
+                    }
+                    else if (key === 'Tab' || key === 9) {
+                        closeSetMenu($switcher, false);
+                    }
+                });
+
+                $menu.on('click.shortcutSet', 'a', function () {
+                    closeSetMenu($switcher, false);
+                });
+            });
         }
     };
 

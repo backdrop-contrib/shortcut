@@ -38,6 +38,24 @@ function shortcut_toolbar_normalize_color($value, $fallback = NULL) {
 }
 
 /**
+ * Determines a readable text color for a background swatch.
+ */
+function shortcut_toolbar_contrast_color($value, $light = '#111111', $dark = '#FFFFFF') {
+  $normalized = shortcut_toolbar_normalize_color($value);
+  if ($normalized === '') {
+    return $light;
+  }
+
+  $hex = substr($normalized, 1);
+  $r = hexdec(substr($hex, 0, 2));
+  $g = hexdec(substr($hex, 2, 2));
+  $b = hexdec(substr($hex, 4, 2));
+
+  $luminance = (0.299 * $r + 0.587 * $g + 0.114 * $b) / 255;
+  return ($luminance > 0.55) ? $light : $dark;
+}
+
+/**
  * Element validator ensuring color inputs store normalized hex values.
  */
 function shortcut_user_set_color_validate($element, &$form_state, $form) {
@@ -427,6 +445,14 @@ function shortcut_user_set_activate_page($account, $machine) {
   if (empty($set['is_default'])) {
     shortcut_user_set_set_default($account->uid, $machine);
     backdrop_set_message(t('Shortcut set %name is now active.', array('%name' => $set['name'])));
+  }
+
+  $destination = backdrop_get_destination();
+  if (!empty($destination['destination'])) {
+    $parsed = backdrop_parse_url($destination['destination']);
+    $path = $parsed['path'];
+    unset($parsed['path']);
+    backdrop_goto($path, $parsed);
   }
 
   backdrop_goto('user/' . $account->uid . '/shortcuts/manage-sets');
@@ -1566,10 +1592,9 @@ function shortcut_toolbar_build(array $context = array()) {
   );
 
   if ($set_label !== '') {
-    $style_attribute = $active_color !== '' ? ' style="--shortcut-active-color: ' . check_plain($active_color) . ';"' : '';
     $main['active_set'] = array(
       '#type' => 'markup',
-      '#markup' => '<div class="shortcut-toolbar__active-set" role="status"' . $style_attribute . '>' . check_plain($set_label) . '</div>',
+      '#markup' => shortcut_toolbar_build_active_set_markup($uid, $sets, $active_machine, $set_label, $active_color, $current_path, $query_parameters),
     );
   }
 
@@ -1739,6 +1764,81 @@ function shortcut_toolbar_manage_button_markup($variant, array $attributes = arr
   }
 
   return '<button' . backdrop_attributes($attributes) . '>' . shortcut_toolbar_manage_icon_markup($variant) . '</button>';
+}
+
+/**
+ * Builds the rendered markup for the active shortcut set indicator.
+ */
+function shortcut_toolbar_build_active_set_markup($uid, array $sets, $active_machine, $label, $color, $current_path, array $query_parameters) {
+  $style_attribute = '';
+  if ($color !== '') {
+    $style_attribute = ' style="--shortcut-active-color: ' . check_plain($color) . ';"';
+  }
+
+  if (count($sets) <= 1) {
+    return '<div class="shortcut-toolbar__active-set" role="status"' . $style_attribute . '>' . check_plain($label) . '</div>';
+  }
+
+  $menu_id = backdrop_html_id('shortcut-set-menu');
+  $destination = shortcut_toolbar_destination_string($current_path, $query_parameters);
+
+  $button_attributes = array(
+    'class' => array('shortcut-toolbar__set-toggle'),
+    'type' => 'button',
+    'aria-haspopup' => 'true',
+    'aria-expanded' => 'false',
+    'aria-controls' => $menu_id,
+  );
+
+  $items = array();
+  foreach ($sets as $machine => $set) {
+    if ($machine === $active_machine) {
+      continue;
+    }
+
+    $classes = array('shortcut-toolbar__set-option');
+    $set_name = check_plain($set['name']);
+    $color_value = isset($set['color']) ? $set['color'] : shortcut_toolbar_default_color();
+    $color_value = shortcut_toolbar_normalize_color($color_value, shortcut_toolbar_default_color());
+    $text_color = shortcut_toolbar_contrast_color($color_value);
+
+    $styles = array('background:' . check_plain($color_value));
+    if ($text_color !== '') {
+      $styles[] = 'color:' . check_plain($text_color);
+    }
+
+    $link_options = array('query' => array('destination' => $destination));
+    $url = url('user/' . $uid . '/shortcuts/manage-sets/' . $machine . '/activate', $link_options);
+    $classes_string = implode(' ', array_map('check_plain', $classes));
+    $style_attribute_li = ' style="' . implode(';', $styles) . '"';
+    $items[] = '<li class="' . $classes_string . '" role="none"' . $style_attribute_li . '><a class="shortcut-toolbar__set-option-link" href="' . check_plain($url) . '" role="menuitem" data-shortcut-set-target="' . check_plain($machine) . '" title="' . check_plain(t('Switch to @set shortcuts', array('@set' => $set['name']))) . '">' . $set_name . '</a></li>';
+  }
+
+  if (empty($items)) {
+    return '<div class="shortcut-toolbar__active-set" role="status"' . $style_attribute . '>' . check_plain($label) . '</div>';
+  }
+
+  $list_markup = '<ul class="shortcut-toolbar__set-menu" id="' . $menu_id . '" role="menu" hidden>' . implode('', $items) . '</ul>';
+  $button_markup = '<button' . backdrop_attributes($button_attributes) . '>' . check_plain($label) . '</button>';
+
+  return '<div class="shortcut-toolbar__active-set shortcut-toolbar__active-set--switcher" role="status"' . $style_attribute . '><div class="shortcut-toolbar__set-switcher">' . $button_markup . $list_markup . '</div></div>';
+}
+
+/**
+ * Builds a destination string used when switching shortcut sets.
+ */
+function shortcut_toolbar_destination_string($path, array $query_parameters = array()) {
+  $path = is_string($path) ? trim($path) : '';
+  if ($path === '') {
+    $path = current_path();
+  }
+
+  $request = shortcut_toolbar_request_string($path, $query_parameters);
+  if ($request !== '') {
+    return $request;
+  }
+
+  return $path;
 }
 
 /**
