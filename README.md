@@ -4,11 +4,10 @@ The **Shortcut** module for Backdrop CMS provides a persistent toolbar that lets
 
 ## Features
 
-- Displays a sticky toolbar pinned to the top of every page with quick links tailored to each user.
+- Displays a sticky toolbar with quick links tailored to each user.
 - Lets every user manage independent shortcut sets without a shared configuration screen.
 - Inline button toggles allow add, enable, and disable actions without page reloads.
 - Color picker support gives each set its own active-toolbar background hue.
-- Active-set badge doubles as a hoverable dropdown so users can switch sets instantly, with menu items styled in their respective colors.
 - Confirmation dialog prevents accidental disables while keeping the UI steady.
 - Respects Backdrop permissions so only authorized users can manage shortcuts.
 
@@ -27,9 +26,8 @@ There is no central settings page for this module. Each authenticated user confi
 
 ## Usage
 
-- Open any page while authenticated; the shortcut toolbar appears at the top by default.
+- Open any page while authenticated; the shortcut toolbar appears at the bottom by default.
 - Use the inline manage button next to each shortcut to add a link, re-enable a disabled entry, or disable it after confirmation.
-- Hover the active set badge to reveal the set switcher, then pick a different collection without leaving the page.
 - Visit `User > Shortcuts` to organize sets, rename collections, pick a toolbar highlight color, or activate a different default set.
 
 ## Troubleshooting
@@ -45,3 +43,4 @@ This module is created and maintained by [Alan Mels](https://github.com/alanmels
 ## Credits
 
 Built from the ground up for Backdrop CMS, this project revives the Shortcut experience that core removed as "a feature not used by the majority of websites". By bringing the tool back as a contributed module, it delivers richer controls, per-user customization, and a modernized toolbar that outpaces the original implementation.
+
