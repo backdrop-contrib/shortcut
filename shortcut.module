@@ -1728,7 +1728,7 @@ function shortcut_toolbar_manage_icon_markup($variant) {
 
   $mask_markup = implode('', $mask_segments);
 
-  $svg = '<svg class="shortcut-toolbar__manage-icon-svg" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false">';
+  $svg = '<svg class="shortcut-toolbar__manage-icon-svg" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" focusable="false">';
   $svg .= '<defs><mask id="' . $mask_id . '" maskUnits="userSpaceOnUse">' . $mask_markup . '</mask></defs>';
   $svg .= '<rect x="0" y="0" width="24" height="24" rx="4" fill="#ffffff" mask="url(#' . $mask_id . ')" />';
   $svg .= '<rect x="0.75" y="0.75" width="22.5" height="22.5" rx="3.25" ry="3.25" fill="none" stroke="#ffffff" stroke-width="1.5" stroke-opacity="0.6" />';
