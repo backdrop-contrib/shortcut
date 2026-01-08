@@ -2640,9 +2640,9 @@ function shortcut_library_info() {
           'media' => 'all',
         ),
       ),
-      'dependencies' => array(
-        array('system', 'backdrop.dialog'),
-      ),
+      // No direct dependency on Backdrop dialogs to avoid reloading jQuery UI
+      // assets that can interfere with core modals; the JS already falls back
+      // to a native confirm when Backdrop.dialog is unavailable.
     ),
   );
 }

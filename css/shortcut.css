@@ -323,7 +323,9 @@ body:not(.shortcut-toolbar-visible) .shortcut-toolbar {
     display: none;
 }
 
-* {
+/* Limit box sizing to the toolbar to avoid altering other admin UI (e.g. modals). */
+.shortcut-toolbar,
+.shortcut-toolbar * {
     box-sizing: border-box;
 }
 
