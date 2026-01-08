@@ -262,6 +262,79 @@
     text-decoration: underline;
 }
 
+/* Responsive adjustments for small screens. */
+@media (max-width: 760px) {
+    :root {
+        --shortcut-toolbar-height: 32px;
+    }
+
+    .shortcut-toolbar {
+        padding: 0 0.5rem;
+    }
+
+    .shortcut-toolbar__content {
+        flex-direction: column;
+        align-items: stretch;
+        height: auto;
+        line-height: 1.3;
+        gap: 0.5rem;
+        padding: 0.5rem 0;
+    }
+
+    .shortcut-toolbar__main {
+        flex-wrap: wrap;
+        gap: 0.35rem;
+    }
+
+    .shortcut-toolbar__active-set {
+        min-width: 8rem;
+        justify-content: flex-start;
+    }
+
+    .shortcut-toolbar__links {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
+        gap: 0.4rem;
+        padding: 0.1rem 0 0.35rem;
+        margin-top: 1rem;
+        width: 100%;
+        white-space: nowrap;
+    }
+
+    .shortcut-toolbar__links>li a {
+        padding: 0.3rem 0.5rem;
+    }
+
+    .shortcut-toolbar__meta {
+        width: 100%;
+        justify-content: flex-start;
+        gap: 0.35rem;
+        margin: 1rem;
+    }
+
+    .shortcut-toolbar__manage-button {
+        min-width: 38px;
+        min-height: 32px;
+        margin-right: 1rem;
+    }
+
+    /* Subtle scroll affordance for overflowing link rows. */
+    .shortcut-toolbar__links::-webkit-scrollbar {
+        height: 6px;
+    }
+
+    .shortcut-toolbar__links::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.35);
+        border-radius: 999px;
+    }
+
+    .shortcut-toolbar__links::-webkit-scrollbar-track {
+        background: transparent;
+    }
+}
+
 body.shortcut-toolbar-active.shortcut-toolbar-visible {
     padding-top: var(--shortcut-toolbar-height);
 }
