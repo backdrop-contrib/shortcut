@@ -21,7 +21,6 @@
 .shortcut-toolbar__content {
     width: 100%;
     margin: 0;
-    font-size: 0.846em;
     line-height: var(--shortcut-toolbar-height);
     height: var(--shortcut-toolbar-height);
     text-align: left;
@@ -29,6 +28,11 @@
     align-items: center;
     justify-content: flex-start;
     position: relative;
+    font-size: 0.846em;
+}
+
+.shortcut-toolbar__links>li {
+    font-size: 11px !important;
 }
 
 .shortcut-toolbar__main {
@@ -363,7 +367,7 @@ body:not(.shortcut-toolbar-visible) .shortcut-toolbar {
     margin-left: 0.75rem;
     vertical-align: middle;
     position: relative;
-    top: 11px;
+    top: 12px;
 }
 
 #admin-bar .shortcut-toolbar-toggle {
