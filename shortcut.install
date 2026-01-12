@@ -176,6 +176,16 @@ function shortcut_uninstall() {
  * Add color configuration for shortcut sets.
  */
 function shortcut_update_1101() {
+  $schema = shortcut_schema();
+
+  // Ensure tables exist for sites upgrading from very early versions.
+  if (!db_table_exists('shortcut_user_sets')) {
+    db_create_table('shortcut_user_sets', $schema['shortcut_user_sets']);
+  }
+  if (!db_table_exists('shortcut_user_links')) {
+    db_create_table('shortcut_user_links', $schema['shortcut_user_links']);
+  }
+
   if (!db_field_exists('shortcut_user_sets', 'color')) {
     db_add_field('shortcut_user_sets', 'color', array(
       'description' => 'Hex color used for highlighting the active shortcut set in the toolbar.',
