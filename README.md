@@ -42,5 +42,5 @@ This module is created and maintained by [Alan Mels](https://github.com/alanmels
 
 ## Credits
 
-Built from the ground up for Backdrop CMS, this project revives the Shortcut experience that core removed as "a feature not used by the majority of websites". By bringing the tool back as a contributed module, it delivers richer controls, per-user customization, and a modernized toolbar that outpaces the original implementation.
+Built from the ground up for Backdrop CMS, this project revives the Shortcut experience that core removed as [a feature not used by the majority of websites](https://docs.backdropcms.org/documentation/features-removed-from-core). By bringing the tool back as a contributed module, it delivers richer controls, per-user customization, and a modernized toolbar that outpaces the original implementation.
 
